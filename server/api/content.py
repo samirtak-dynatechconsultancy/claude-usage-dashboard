@@ -1,12 +1,13 @@
-"""GET /api/content?session_uuid=<uuid> — fetch the raw conversation content.
+"""GET /api/content?session_uuid=<uuid> — fetch parsed conversation content.
 
-Returns the parsed JSONL records for a session. Server-side proxy keeps
-Storage objects private (anon key has no read access via RLS).
+Postgres-only mode: reads from the `messages` table instead of fetching raw
+JSONL files from Supabase Storage. Returns records in the same shape the
+local dashboard.py / older Storage-based endpoint did, so the existing
+dashboard JS modal needs zero changes.
 
 Auth: Authorization: Bearer <Supabase JWT>. Email must be on dashboard_users.
 """
 
-import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler
@@ -16,7 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from lib.auth import verify_dashboard_user
 from lib.http import write_json
-from lib.supabase_client import service_client, storage_bucket
+from lib.supabase_client import service_client
 
 
 class handler(BaseHTTPRequestHandler):
@@ -32,47 +33,50 @@ class handler(BaseHTTPRequestHandler):
 
         sb = service_client()
 
-        # Find every distinct content_path referenced by this session's turns.
+        # Look up session_id (uuid PK) from the public session_uuid.
         sess = (
-            sb.table("sessions")
-            .select("id")
-            .eq("session_uuid", session_uuid)
-            .limit(1)
-            .execute()
+            sb.table("sessions").select("id")
+            .eq("session_uuid", session_uuid).limit(1).execute()
         )
         if not sess.data:
             return write_json(self, 404, {"error": "session not found"})
         sid = sess.data[0]["id"]
 
-        rows = (
-            sb.table("turns")
-            .select("content_path")
-            .eq("session_id", sid)
-            .execute()
-        )
-        paths = sorted({r["content_path"] for r in (rows.data or []) if r.get("content_path")})
-        if not paths:
-            return write_json(self, 200, {"records": []})
-
-        # Download each file and merge records. JSONL is small relative to
-        # the 60s timeout — typical session is < 5 MB.
+        # Pull every message for the session, ordered by time. A long
+        # conversation might have a few hundred messages with large text
+        # content (~50KB each). Paginate to be safe.
         records = []
-        bucket = storage_bucket()
-        for path in paths:
-            try:
-                blob = sb.storage.from_(bucket).download(path)
-                text = blob.decode("utf-8", errors="replace") if isinstance(blob, (bytes, bytearray)) else str(blob)
-                for line in text.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if rec.get("sessionId") == session_uuid:
-                        records.append(rec)
-            except Exception as e:
-                records.append({"_error": str(e), "_path": path})
+        page = 0
+        PAGE_SIZE = 500
+        while True:
+            chunk = (
+                sb.table("messages")
+                .select("role, timestamp, text_content, content_blocks, "
+                        "tool_uses, tool_results, message_uuid")
+                .eq("session_id", sid)
+                .order("timestamp")
+                .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1)
+                .execute()
+            )
+            data = chunk.data or []
+            if not data:
+                break
+            for m in data:
+                # Reconstruct the JSONL-style shape the dashboard JS expects:
+                #   { type, timestamp, message: { content } }
+                records.append({
+                    "type":      m["role"],
+                    "timestamp": m["timestamp"],
+                    "message": {
+                        "id":      m.get("message_uuid"),
+                        "content": m.get("content_blocks") or [],
+                    },
+                })
+            if len(data) < PAGE_SIZE:
+                break
+            page += 1
 
-        return write_json(self, 200, {"records": records, "files": paths})
+        return write_json(self, 200, {
+            "records": records,
+            "count":   len(records),
+        })
