@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in — Claude Code Usage Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --accent: #d97757;
+    --error: #f87171;
+    --success: #4ade80;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 40px; width: 400px; max-width: 92vw;
+  }
+  h1 { color: var(--accent); font-size: 20px; margin-bottom: 6px; }
+  p.sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; line-height: 1.5; }
+  label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase;
+          letter-spacing: 0.05em; margin-bottom: 6px; }
+  input[type="email"] {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); padding: 10px 12px; border-radius: 6px;
+    font-size: 14px; font-family: inherit;
+  }
+  input[type="email"]:focus { outline: none; border-color: var(--accent); }
+  button {
+    width: 100%; background: var(--accent); color: white; border: none;
+    padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 600;
+    cursor: pointer; margin-top: 16px;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+  #msg { margin-top: 16px; font-size: 13px; line-height: 1.4; }
+  #msg.error   { color: var(--error); }
+  #msg.success { color: var(--success); }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Sign in</h1>
+  <p class="sub">Claude Code Usage Dashboard. Restricted to allowlisted team members — we'll email you a one-time login link.</p>
+  <form id="login-form">
+    <label for="email">Email</label>
+    <input type="email" id="email" placeholder="you@company.com" required autocomplete="email" autofocus>
+    <button type="submit" id="submit-btn">Send magic link</button>
+  </form>
+  <div id="msg"></div>
+</div>
+
+<script>
+let supabase = null;
+
+async function init() {
+  // Pull public client config from the server.
+  const res = await fetch('/api/config');
+  if (!res.ok) {
+    setMsg('Failed to load config from /api/config. Is SUPABASE_URL set on the server?', 'error');
+    return;
+  }
+  const cfg = await res.json();
+  supabase = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+
+  // If we already have a valid session, skip the form.
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) {
+    window.location.replace('/');
+    return;
+  }
+
+  // Magic-link callback: Supabase returns the user via #access_token=... on the
+  // URL fragment. detectSessionInUrl is on by default, so the SDK handles it.
+  // After it settles, re-check the session.
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_IN' && session) {
+      window.location.replace('/');
+    }
+  });
+}
+
+function setMsg(text, kind) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = kind || '';
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!supabase) { setMsg('Still initializing — try again in a moment.', 'error'); return; }
+  const btn = document.getElementById('submit-btn');
+  const email = document.getElementById('email').value.trim();
+  if (!email) return;
+
+  btn.disabled = true;
+  setMsg('Sending…');
+
+  // emailRedirectTo brings them back to the dashboard root after they click
+  // the link in the email.
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin + '/' },
+  });
+
+  if (error) {
+    setMsg('Failed: ' + error.message, 'error');
+    btn.disabled = false;
+  } else {
+    setMsg('Check your inbox — we sent a sign-in link to ' + email + '.', 'success');
+  }
+});
+
+init();
+</script>
+</body>
+</html>

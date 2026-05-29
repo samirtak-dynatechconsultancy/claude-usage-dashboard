@@ -1,0 +1,5 @@
+# Vercel Python serverless runtime resolves this for /api/**/*.py.
+# Keep this list lean — every package adds cold-start time.
+
+supabase==2.9.1
+# pinned to a recent stable; supabase-py bundles postgrest, gotrue, storage3, realtime

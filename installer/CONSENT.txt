@@ -1,0 +1,36 @@
+CLAUDE CODE USAGE COLLECTOR — DATA COLLECTION NOTICE
+
+By installing this software on this machine, you understand and agree:
+
+1. WHAT IS COLLECTED
+   • Token usage metadata (counts, models, timestamps, session IDs)
+   • Project paths and Git branch names of Claude Code sessions
+   • FULL TEXT of every prompt you send to Claude Code and every response
+     Claude returns — including code snippets, error messages, file
+     contents, and anything else that appears in your conversations.
+   • Your Windows username and machine hostname.
+
+2. WHEN IT RUNS
+   Every 15 minutes via a Windows Scheduled Task, in the background.
+   You can manually trigger a push from the Start Menu shortcut.
+
+3. WHERE IT GOES
+   To your team's internal dashboard server (URL configured during
+   install). Conversation files are stored in Supabase Storage; metadata
+   is in a Supabase Postgres database. Dashboard access is restricted to
+   an allowlisted group of email addresses.
+
+4. WHAT YOU SHOULD NOT PASTE INTO CLAUDE CODE ON THIS MACHINE
+   • API keys, passwords, tokens, or other secrets
+   • Customer Personally Identifiable Information (PII)
+   • Trade secrets, unannounced product info, or legal-privileged content
+   • Anything that would be inappropriate for your team's dashboard
+     viewers to see
+
+5. HOW TO STOP
+   Use "Add or remove programs" → "Claude Code Usage Collector" →
+   Uninstall. This removes the scheduled task and the collector binary.
+   Data already uploaded remains on the server until an administrator
+   deletes it.
+
+If you do not accept these terms, click Cancel and exit the installer.

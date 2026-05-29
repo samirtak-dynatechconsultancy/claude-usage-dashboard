@@ -1,0 +1,8 @@
+{
+  "_comment": "Copy to config.json next to collector.exe (the installer does this for you) and fill in the two values below. Edit projects_dirs only if Claude Code stores transcripts in a non-default location.",
+
+  "server_url":    "https://YOUR-VERCEL-APP.vercel.app",
+  "ingest_token":  "REPLACE_WITH_INGEST_TOKEN_FROM_SERVER",
+
+  "projects_dirs": null
+}

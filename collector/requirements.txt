@@ -1,0 +1,2 @@
+# collector.py is stdlib-only by design — fewer wheels for PyInstaller to bundle.
+# Add packages here only if you genuinely need them at runtime.

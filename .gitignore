@@ -1,0 +1,53 @@
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# ── Existing local-dev artifacts ───────────────────────────────────────────
+server.log
+.pr-candidates.md
+
+# ── Project ────────────────────────────────────────────────────────────────
+# Local SQLite DB created by the original scanner.py (not used by the server)
+*.db
+*.db-journal
+
+# Per-machine collector state (push history) — never commit
+collector/state.json
+collector/config.local.json
+
+# ── Secrets ────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+server/.env
+collector/.env
+installer/team_token.txt
+
+# ── Vercel ─────────────────────────────────────────────────────────────────
+.vercel/
+
+# ── Build artifacts ────────────────────────────────────────────────────────
+# PyInstaller output
+collector/build/
+collector/dist/
+collector/*.spec
+installer/Output/
+installer/build/
+
+# ── Editor / OS ────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Claude Code per-project state (not for the public repo) ────────────────
+.claude/

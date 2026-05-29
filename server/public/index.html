@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Usage Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d3a;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --accent: #d97757;
+    --blue: #4f8ef7;
+    --green: #4ade80;
+    --error: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text);
+         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; }
+
+  header { background: var(--card); border-bottom: 1px solid var(--border);
+           padding: 16px 24px; display: flex; align-items: center;
+           justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
+  .header-right { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); }
+  .header-right a { color: var(--muted); text-decoration: none; }
+  .header-right a:hover { color: var(--text); }
+
+  #filter-bar { background: var(--card); border-bottom: 1px solid var(--border);
+                padding: 10px 24px; display: flex; align-items: center;
+                gap: 12px; flex-wrap: wrap; }
+  .filter-label { font-size: 11px; font-weight: 600; text-transform: uppercase;
+                  letter-spacing: 0.05em; color: var(--muted); }
+  .filter-sep { width: 1px; height: 22px; background: var(--border); }
+  select, .filter-input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 5px 10px; border-radius: 6px; font-size: 13px; font-family: inherit;
+  }
+  select:focus { outline: none; border-color: var(--accent); }
+  .range-group { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .range-btn { padding: 4px 13px; background: transparent; border: none;
+               border-right: 1px solid var(--border); color: var(--muted);
+               font-size: 12px; cursor: pointer; }
+  .range-btn:last-child { border-right: none; }
+  .range-btn:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .range-btn.active { background: rgba(217,119,87,0.15); color: var(--accent); font-weight: 600; }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+               gap: 16px; margin-bottom: 24px; }
+  .stat-card { background: var(--card); border: 1px solid var(--border);
+               border-radius: 8px; padding: 16px; }
+  .stat-card .label { color: var(--muted); font-size: 11px; text-transform: uppercase;
+                      letter-spacing: 0.05em; margin-bottom: 6px; }
+  .stat-card .value { font-size: 22px; font-weight: 700; }
+  .stat-card .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+
+  .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  .chart-card { background: var(--card); border: 1px solid var(--border);
+                border-radius: 8px; padding: 20px; }
+  .chart-card.wide { grid-column: 1 / -1; }
+  .chart-card h2 { font-size: 13px; font-weight: 600; color: var(--muted);
+                   text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 16px; }
+  .chart-wrap { position: relative; height: 240px; }
+  .chart-wrap.tall { height: 300px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase;
+       letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  tr:last-child td { border-bottom: none; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: rgba(255,255,255,0.03); }
+  .model-tag { display: inline-block; padding: 2px 7px; border-radius: 4px;
+               font-size: 11px; background: rgba(79,142,247,0.15); color: var(--blue); }
+  .cost { color: var(--green); font-family: monospace; }
+  .num { font-family: monospace; }
+  .muted { color: var(--muted); }
+  .section-title { font-size: 13px; font-weight: 600; color: var(--muted);
+                   text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+  .table-card { background: var(--card); border: 1px solid var(--border);
+                border-radius: 8px; padding: 20px; margin-bottom: 24px; overflow-x: auto; }
+
+  /* Sign-out button */
+  .signout-btn { background: transparent; border: 1px solid var(--border);
+                 color: var(--muted); padding: 4px 10px; border-radius: 5px;
+                 font-size: 12px; cursor: pointer; }
+  .signout-btn:hover { color: var(--text); border-color: var(--accent); }
+
+  /* Conversation drill-down modal */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+                    display: none; align-items: center; justify-content: center; z-index: 10; }
+  .modal-backdrop.show { display: flex; }
+  .modal { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+           padding: 24px; width: min(900px, 95vw); height: min(80vh, 800px);
+           display: flex; flex-direction: column; }
+  .modal h2 { font-size: 14px; color: var(--accent); margin-bottom: 4px; }
+  .modal .meta-row { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .modal .close { background: transparent; border: none; color: var(--muted);
+                  font-size: 22px; cursor: pointer; float: right; line-height: 1; }
+  .modal .close:hover { color: var(--text); }
+  .modal-content { flex: 1; overflow-y: auto; background: var(--bg);
+                   border: 1px solid var(--border); border-radius: 6px; padding: 12px; }
+  .msg-bubble { margin-bottom: 12px; padding: 10px 12px; border-radius: 6px; }
+  .msg-user      { background: rgba(79,142,247,0.06);  border-left: 3px solid var(--blue); }
+  .msg-assistant { background: rgba(217,119,87,0.06);  border-left: 3px solid var(--accent); }
+  .msg-bubble .role { font-size: 11px; color: var(--muted); text-transform: uppercase;
+                      letter-spacing: 0.05em; margin-bottom: 6px; }
+  .msg-bubble pre { white-space: pre-wrap; word-break: break-word; font-family: inherit;
+                    font-size: 13px; line-height: 1.5; }
+
+  #status { text-align: center; padding: 60px; color: var(--muted); }
+  #status.error { color: var(--error); }
+
+  @media (max-width: 768px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    .chart-card.wide { grid-column: 1; }
+  }
+</style>
+</head>
+<body>
+
+<div id="status">Loading…</div>
+<div id="app" style="display:none;">
+
+<header>
+  <h1>Claude Code Usage Dashboard</h1>
+  <div class="header-right">
+    <span id="viewer-email" class="muted"></span>
+    <button class="signout-btn" onclick="signOut()">Sign out</button>
+  </div>
+</header>
+
+<div id="filter-bar">
+  <div class="filter-label">User</div>
+  <select id="user-filter" onchange="onUserChange()">
+    <option value="">All users</option>
+  </select>
+  <div class="filter-sep"></div>
+  <div class="filter-label">Model</div>
+  <select id="model-filter" onchange="onModelChange()" multiple size="1" style="min-width: 180px;">
+    <option value="">All models</option>
+  </select>
+  <div class="filter-sep"></div>
+  <div class="filter-label">Range</div>
+  <div class="range-group">
+    <button class="range-btn" data-range="today">Today</button>
+    <button class="range-btn" data-range="7d">7d</button>
+    <button class="range-btn active" data-range="30d">30d</button>
+    <button class="range-btn" data-range="90d">90d</button>
+    <button class="range-btn" data-range="all">All</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="stats-row" id="stats-row"></div>
+
+  <div class="charts-grid">
+    <div class="chart-card wide">
+      <h2 id="daily-chart-title">Daily Token Usage</h2>
+      <div class="chart-wrap tall"><canvas id="chart-daily"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h2>By Model</h2>
+      <div class="chart-wrap"><canvas id="chart-model"></canvas></div>
+    </div>
+    <div class="chart-card">
+      <h2>Top Users by Tokens</h2>
+      <div class="chart-wrap"><canvas id="chart-user"></canvas></div>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <div class="section-title">Cost by Model</div>
+    <table>
+      <thead><tr>
+        <th>Model</th><th>Turns</th><th>Input</th><th>Output</th>
+        <th>Cache Read</th><th>Cache Write</th><th>Est. Cost</th>
+      </tr></thead>
+      <tbody id="model-cost-body"></tbody>
+    </table>
+  </div>
+
+  <div class="table-card">
+    <div class="section-title">Recent Sessions <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view the conversation</span></div>
+    <table>
+      <thead><tr>
+        <th>User</th><th>Machine</th><th>Session</th><th>Project</th>
+        <th>Last Active</th><th>Model</th><th>Turns</th>
+        <th>Input</th><th>Output</th><th>Est. Cost</th>
+      </tr></thead>
+      <tbody id="sessions-body"></tbody>
+    </table>
+  </div>
+</div>
+
+</div><!-- /#app -->
+
+<!-- Drill-down modal -->
+<div class="modal-backdrop" id="modal-backdrop" onclick="closeModalOnBackdrop(event)">
+  <div class="modal">
+    <button class="close" onclick="closeModal()">&times;</button>
+    <h2 id="modal-title">Conversation</h2>
+    <div class="meta-row" id="modal-meta"></div>
+    <div class="modal-content" id="modal-content">Loading…</div>
+  </div>
+</div>
+
+<script>
+// ─── Globals ────────────────────────────────────────────────────────────────
+let supabase = null;
+let session = null;
+let rawData = null;
+let selectedRange = '30d';
+let selectedUser = '';
+let selectedModels = null;  // null = all
+const charts = {};
+
+// ─── Init ───────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const cfg = await (await fetch('/api/config')).json();
+    supabase = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  } catch (e) {
+    return showStatus('Failed to load /api/config: ' + e.message, true);
+  }
+
+  const { data } = await supabase.auth.getSession();
+  session = data.session;
+  if (!session) { window.location.replace('/login'); return; }
+
+  // Verify with the server that we're on the dashboard_users allowlist.
+  const check = await fetch('/api/auth-check', { headers: authHeaders() });
+  if (check.status === 403) {
+    const body = await check.json();
+    return showStatus(body.error || 'Not authorized', true);
+  }
+  if (!check.ok) {
+    return showStatus('Auth check failed (HTTP ' + check.status + ')', true);
+  }
+  const me = await check.json();
+  document.getElementById('viewer-email').textContent = me.email;
+
+  // Wire up range buttons (data is fetched after the first wire).
+  document.querySelectorAll('.range-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedRange = btn.dataset.range;
+      document.querySelectorAll('.range-btn').forEach(b =>
+        b.classList.toggle('active', b === btn));
+      applyFilter();
+    });
+  });
+
+  await loadData();
+  document.getElementById('status').style.display = 'none';
+  document.getElementById('app').style.display = '';
+}
+
+function authHeaders() {
+  return { 'Authorization': 'Bearer ' + session.access_token };
+}
+
+async function loadData() {
+  const qs = selectedUser ? '?user_id=' + encodeURIComponent(selectedUser) : '';
+  const res = await fetch('/api/data' + qs, { headers: authHeaders() });
+  if (!res.ok) {
+    return showStatus('Failed to load data: HTTP ' + res.status, true);
+  }
+  rawData = await res.json();
+
+  // Populate user filter (first time only)
+  const sel = document.getElementById('user-filter');
+  if (sel.options.length <= 1) {
+    for (const u of rawData.users) {
+      const opt = document.createElement('option');
+      opt.value = u.id;
+      opt.textContent = u.label + (u.email ? ' (' + u.email + ')' : '');
+      sel.appendChild(opt);
+    }
+  }
+
+  // Populate model filter (rebuild each time as model list can grow)
+  const ms = document.getElementById('model-filter');
+  ms.innerHTML = '';
+  const allOpt = document.createElement('option');
+  allOpt.value = ''; allOpt.textContent = 'All models'; allOpt.selected = true;
+  ms.appendChild(allOpt);
+  for (const m of rawData.all_models) {
+    const opt = document.createElement('option');
+    opt.value = m; opt.textContent = m;
+    ms.appendChild(opt);
+  }
+  ms.size = 1;
+  selectedModels = null;
+
+  applyFilter();
+}
+
+async function onUserChange() {
+  selectedUser = document.getElementById('user-filter').value;
+  await loadData();
+}
+
+function onModelChange() {
+  const opts = Array.from(document.getElementById('model-filter').selectedOptions);
+  const picked = opts.map(o => o.value).filter(Boolean);
+  selectedModels = picked.length ? new Set(picked) : null;
+  applyFilter();
+}
+
+function showStatus(msg, isError) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = isError ? 'error' : '';
+}
+
+async function signOut() {
+  await supabase.auth.signOut();
+  window.location.replace('/login');
+}
+
+// ─── Pricing (mirror of server/lib/pricing.py) ──────────────────────────────
+const PRICING = {
+  'claude-opus-4-7':   { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
+  'claude-opus-4-6':   { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
+  'claude-opus-4-5':   { input: 5.00, output: 25.00, cache_write: 6.25, cache_read: 0.50 },
+  'claude-sonnet-4-7': { input: 3.00, output: 15.00, cache_write: 3.75, cache_read: 0.30 },
+  'claude-sonnet-4-6': { input: 3.00, output: 15.00, cache_write: 3.75, cache_read: 0.30 },
+  'claude-sonnet-4-5': { input: 3.00, output: 15.00, cache_write: 3.75, cache_read: 0.30 },
+  'claude-haiku-4-7':  { input: 1.00, output:  5.00, cache_write: 1.25, cache_read: 0.10 },
+  'claude-haiku-4-6':  { input: 1.00, output:  5.00, cache_write: 1.25, cache_read: 0.10 },
+  'claude-haiku-4-5':  { input: 1.00, output:  5.00, cache_write: 1.25, cache_read: 0.10 },
+};
+function getPricing(model) {
+  if (!model) return null;
+  if (PRICING[model]) return PRICING[model];
+  for (const k of Object.keys(PRICING)) if (model.startsWith(k)) return PRICING[k];
+  const m = model.toLowerCase();
+  if (m.includes('opus'))   return PRICING['claude-opus-4-7'];
+  if (m.includes('sonnet')) return PRICING['claude-sonnet-4-6'];
+  if (m.includes('haiku'))  return PRICING['claude-haiku-4-5'];
+  return null;
+}
+function calcCost(model, inp, out, cr, cc) {
+  const p = getPricing(model);
+  if (!p) return 0;
+  return inp * p.input / 1e6 + out * p.output / 1e6
+       + cr * p.cache_read / 1e6 + cc * p.cache_write / 1e6;
+}
+
+// ─── Formatting ─────────────────────────────────────────────────────────────
+function fmt(n) {
+  if (n >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+const fmtCost  = c => '$' + c.toFixed(4);
+const fmtMoney = c => '$' + c.toFixed(2);
+const esc = s => { const d = document.createElement('div'); d.textContent = String(s ?? ''); return d.innerHTML; };
+
+// ─── Range bounds ───────────────────────────────────────────────────────────
+function getRangeBounds(range) {
+  if (range === 'all') return { start: null, end: null };
+  const today = new Date(); const iso = d => d.toISOString().slice(0,10);
+  if (range === 'today') { const t = iso(today); return { start: t, end: t }; }
+  const days = range === '7d' ? 7 : range === '30d' ? 30 : 90;
+  const d = new Date(); d.setDate(d.getDate() - days);
+  return { start: iso(d), end: null };
+}
+
+// ─── Filter + render ────────────────────────────────────────────────────────
+function applyFilter() {
+  if (!rawData) return;
+  const { start, end } = getRangeBounds(selectedRange);
+  const wantModel = m => !selectedModels || selectedModels.has(m);
+
+  // Daily totals
+  const daily = {};
+  const byModel = {};
+  for (const r of rawData.daily_by_model) {
+    if (!wantModel(r.model)) continue;
+    if (start && r.day < start) continue;
+    if (end && r.day > end) continue;
+    const d = daily[r.day] ||= { day: r.day, input: 0, output: 0, cache_read: 0, cache_creation: 0 };
+    d.input += r.input; d.output += r.output;
+    d.cache_read += r.cache_read; d.cache_creation += r.cache_creation;
+
+    const m = byModel[r.model] ||= { model: r.model, input: 0, output: 0,
+                                     cache_read: 0, cache_creation: 0, turns: 0, sessions: 0 };
+    m.input += r.input; m.output += r.output;
+    m.cache_read += r.cache_read; m.cache_creation += r.cache_creation;
+    m.turns += r.turns;
+  }
+  const dailySorted = Object.values(daily).sort((a, b) => a.day.localeCompare(b.day));
+  const byModelSorted = Object.values(byModel).sort((a, b) =>
+    calcCost(b.model, b.input, b.output, b.cache_read, b.cache_creation) -
+    calcCost(a.model, a.input, a.output, a.cache_read, a.cache_creation));
+
+  // Sessions
+  const filteredSessions = rawData.sessions.filter(s =>
+    wantModel(s.model) &&
+    (!start || s.last_date >= start) &&
+    (!end || s.last_date <= end)
+  );
+  for (const s of filteredSessions) {
+    if (byModel[s.model]) byModel[s.model].sessions++;
+  }
+
+  // By user
+  const byUser = {};
+  for (const s of filteredSessions) {
+    const u = byUser[s.user_label] ||= { label: s.user_label, input: 0, output: 0, sessions: 0, cost: 0 };
+    u.input += s.input; u.output += s.output; u.sessions++;
+    u.cost += calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
+  }
+  const byUserSorted = Object.values(byUser).sort((a, b) => (b.input + b.output) - (a.input + a.output)).slice(0, 10);
+
+  // Totals
+  const totals = {
+    sessions:       filteredSessions.length,
+    turns:          byModelSorted.reduce((a, m) => a + m.turns, 0),
+    input:          byModelSorted.reduce((a, m) => a + m.input, 0),
+    output:         byModelSorted.reduce((a, m) => a + m.output, 0),
+    cache_read:     byModelSorted.reduce((a, m) => a + m.cache_read, 0),
+    cache_creation: byModelSorted.reduce((a, m) => a + m.cache_creation, 0),
+    cost:           byModelSorted.reduce((a, m) => a + calcCost(m.model, m.input, m.output, m.cache_read, m.cache_creation), 0),
+  };
+
+  document.getElementById('daily-chart-title').textContent =
+    'Daily Token Usage — ' + ({today:'Today','7d':'Last 7 Days','30d':'Last 30 Days','90d':'Last 90 Days',all:'All Time'}[selectedRange]);
+
+  renderStats(totals);
+  renderDailyChart(dailySorted);
+  renderModelChart(byModelSorted);
+  renderUserChart(byUserSorted);
+  renderModelCostTable(byModelSorted);
+  renderSessionsTable(filteredSessions.slice(0, 50));
+}
+
+// ─── Renderers ──────────────────────────────────────────────────────────────
+function renderStats(t) {
+  const cards = [
+    { label: 'Sessions',     value: t.sessions.toLocaleString() },
+    { label: 'Turns',        value: fmt(t.turns) },
+    { label: 'Input',        value: fmt(t.input) },
+    { label: 'Output',       value: fmt(t.output) },
+    { label: 'Cache Read',   value: fmt(t.cache_read) },
+    { label: 'Cache Write',  value: fmt(t.cache_creation) },
+    { label: 'Est. Cost',    value: fmtMoney(t.cost), color: '#4ade80' },
+  ];
+  document.getElementById('stats-row').innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="label">${c.label}</div>
+      <div class="value" style="${c.color?'color:'+c.color:''}">${esc(c.value)}</div>
+    </div>`).join('');
+}
+
+const TOKEN_COLORS = {
+  input:          'rgba(79,142,247,0.8)',
+  output:         'rgba(167,139,250,0.8)',
+  cache_read:     'rgba(74,222,128,0.6)',
+  cache_creation: 'rgba(251,191,36,0.6)',
+};
+
+function renderDailyChart(rows) {
+  const ctx = document.getElementById('chart-daily').getContext('2d');
+  if (charts.daily) charts.daily.destroy();
+  charts.daily = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.day),
+      datasets: [
+        { label: 'Input',          data: rows.map(r => r.input),          backgroundColor: TOKEN_COLORS.input,          stack: 's' },
+        { label: 'Output',         data: rows.map(r => r.output),         backgroundColor: TOKEN_COLORS.output,         stack: 's' },
+        { label: 'Cache Read',     data: rows.map(r => r.cache_read),     backgroundColor: TOKEN_COLORS.cache_read,     stack: 's' },
+        { label: 'Cache Creation', data: rows.map(r => r.cache_creation), backgroundColor: TOKEN_COLORS.cache_creation, stack: 's' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8892a4' } } },
+      scales: {
+        x: { stacked: true, ticks: { color: '#8892a4' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { stacked: true, ticks: { color: '#8892a4', callback: v => fmt(v) },
+             grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+    },
+  });
+}
+
+const MODEL_COLORS = ['#d97757','#4f8ef7','#4ade80','#a78bfa','#fbbf24','#f472b6','#34d399','#60a5fa'];
+
+function renderModelChart(rows) {
+  const ctx = document.getElementById('chart-model').getContext('2d');
+  if (charts.model) charts.model.destroy();
+  charts.model = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: rows.map(r => r.model),
+      datasets: [{ data: rows.map(r => r.input + r.output),
+                   backgroundColor: rows.map((_, i) => MODEL_COLORS[i % MODEL_COLORS.length]) }],
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+               plugins: { legend: { position: 'right', labels: { color: '#8892a4', font: { size: 11 } } } } },
+  });
+}
+
+function renderUserChart(rows) {
+  const ctx = document.getElementById('chart-user').getContext('2d');
+  if (charts.user) charts.user.destroy();
+  charts.user = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: rows.map(r => r.label),
+      datasets: [{ label: 'Tokens', data: rows.map(r => r.input + r.output),
+                   backgroundColor: 'rgba(79,142,247,0.7)' }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#8892a4', callback: v => fmt(v) },
+             grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+    },
+  });
+}
+
+function renderModelCostTable(rows) {
+  document.getElementById('model-cost-body').innerHTML = rows.map(r => {
+    const cost = calcCost(r.model, r.input, r.output, r.cache_read, r.cache_creation);
+    return `<tr>
+      <td><span class="model-tag">${esc(r.model)}</span></td>
+      <td class="num">${fmt(r.turns)}</td>
+      <td class="num">${fmt(r.input)}</td>
+      <td class="num">${fmt(r.output)}</td>
+      <td class="num">${fmt(r.cache_read)}</td>
+      <td class="num">${fmt(r.cache_creation)}</td>
+      <td class="cost">${fmtCost(cost)}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderSessionsTable(rows) {
+  document.getElementById('sessions-body').innerHTML = rows.map(s => {
+    const cost = calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
+    return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
+      <td>${esc(s.user_label)}</td>
+      <td class="muted">${esc(s.machine_label)}</td>
+      <td class="muted num">${esc(s.session_id)}</td>
+      <td>${esc(s.project)}</td>
+      <td class="muted">${esc(s.last)}</td>
+      <td><span class="model-tag">${esc(s.model)}</span></td>
+      <td class="num">${s.turns}</td>
+      <td class="num">${fmt(s.input)}</td>
+      <td class="num">${fmt(s.output)}</td>
+      <td class="cost">${fmtCost(cost)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── Conversation drill-down ────────────────────────────────────────────────
+async function openSession(uuid, user, project) {
+  document.getElementById('modal-title').textContent = project + ' · ' + user;
+  document.getElementById('modal-meta').textContent = 'Session ' + uuid.slice(0, 8) + '…';
+  document.getElementById('modal-content').textContent = 'Loading…';
+  document.getElementById('modal-backdrop').classList.add('show');
+
+  try {
+    const res = await fetch('/api/content?session_uuid=' + encodeURIComponent(uuid),
+                            { headers: authHeaders() });
+    if (!res.ok) {
+      document.getElementById('modal-content').textContent =
+        'Failed to load content (HTTP ' + res.status + ')';
+      return;
+    }
+    const body = await res.json();
+    renderConversation(body.records || []);
+  } catch (e) {
+    document.getElementById('modal-content').textContent = 'Error: ' + e.message;
+  }
+}
+
+function renderConversation(records) {
+  const html = records.map(r => {
+    if (r._error) return `<div class="muted">[file fetch error: ${esc(r._error)}]</div>`;
+    if (r.type !== 'user' && r.type !== 'assistant') return '';
+    const msg = r.message || {};
+    const role = r.type === 'user' ? 'User' : 'Assistant';
+
+    // message.content can be a string OR an array of content blocks
+    let text = '';
+    if (typeof msg.content === 'string') text = msg.content;
+    else if (Array.isArray(msg.content)) {
+      text = msg.content.map(c => {
+        if (c.type === 'text') return c.text || '';
+        if (c.type === 'tool_use') return `[tool_use: ${c.name}]\n` + JSON.stringify(c.input || {}, null, 2);
+        if (c.type === 'tool_result') {
+          const out = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || {}, null, 2);
+          return `[tool_result for ${c.tool_use_id || '?'}]\n` + out;
+        }
+        return '[' + (c.type || 'unknown') + ']';
+      }).join('\n\n');
+    }
+    return `<div class="msg-bubble msg-${r.type}">
+      <div class="role">${role}${r.timestamp ? ' · ' + esc(r.timestamp) : ''}</div>
+      <pre>${esc(text || '(empty)')}</pre>
+    </div>`;
+  }).join('');
+  document.getElementById('modal-content').innerHTML = html || '<div class="muted">No content available.</div>';
+}
+
+function closeModal() {
+  document.getElementById('modal-backdrop').classList.remove('show');
+}
+function closeModalOnBackdrop(e) {
+  if (e.target.id === 'modal-backdrop') closeModal();
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeModal();
+});
+
+init();
+</script>
+</body>
+</html>
