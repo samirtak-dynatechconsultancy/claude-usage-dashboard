@@ -54,9 +54,34 @@ class handler(BaseHTTPRequestHandler):
         sb = service_client()
         bucket = storage_bucket()
 
-        # storage3's create_signed_upload_url returns {"url": ..., "token": ...}.
-        # The collector PUTs the JSONL body to `url`.
-        signed = sb.storage.from_(bucket).create_signed_upload_url(object_path)
+        # storage3's create_signed_upload_url() refuses to issue a URL if the
+        # object already exists at `object_path` — it raises with a message
+        # containing "Duplicate". This happens when a previous push uploaded
+        # the file but failed at /api/ingest before saving local state, so
+        # the collector retries the same content-hash-keyed path.
+        #
+        # The path is content-hash addressed, so an existing object at this
+        # path has byte-identical content. Safe to delete and re-issue.
+        try:
+            signed = sb.storage.from_(bucket).create_signed_upload_url(object_path)
+        except Exception as e:
+            msg = str(e).lower()
+            is_duplicate = (
+                "duplicate" in msg
+                or "already exists" in msg
+                or "resource already exists" in msg
+                or "409" in msg
+            )
+            if not is_duplicate:
+                raise
+            # Best-effort: remove the stale object, then retry. If the remove
+            # fails for some reason (race, perms), let the retry surface a
+            # clearer error than the original duplicate.
+            try:
+                sb.storage.from_(bucket).remove([object_path])
+            except Exception:
+                pass
+            signed = sb.storage.from_(bucket).create_signed_upload_url(object_path)
 
         # supabase-py shapes vary by version; normalize.
         url = signed.get("signed_url") or signed.get("signedUrl") or signed.get("url")
