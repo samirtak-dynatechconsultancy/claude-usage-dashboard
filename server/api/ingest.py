@@ -34,6 +34,7 @@ Request body:
 
 import os
 import sys
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -86,11 +87,17 @@ class handler(BaseHTTPRequestHandler):
 
         sb = service_client()
 
+        # PostgREST receives JSON values as literals, so we cannot send the
+        # string "now()" and expect Postgres to evaluate it — only 'now' is
+        # a magic timestamp literal, 'now()' fails parsing. Build an ISO
+        # timestamp here in Python and reuse it across this batch.
+        now_iso = datetime.now(timezone.utc).isoformat()
+
         # ── 1. Upsert user ──────────────────────────────────────────────────
         user_row = (
             sb.table("users")
             .upsert(
-                {"os_username": os_username, "last_seen": "now()"},
+                {"os_username": os_username, "last_seen": now_iso},
                 on_conflict="os_username",
             )
             .execute()
@@ -107,7 +114,7 @@ class handler(BaseHTTPRequestHandler):
                     "hostname": hostname,
                     "os": machine_in.get("os"),
                     "machine_fp": machine_fp,
-                    "last_seen": "now()",
+                    "last_seen": now_iso,
                 },
                 on_conflict="machine_fp",
             )
@@ -132,7 +139,7 @@ class handler(BaseHTTPRequestHandler):
                     "first_timestamp": s.get("first_timestamp"),
                     "last_timestamp":  s.get("last_timestamp"),
                     "model":           s.get("model"),
-                    "updated_at":      "now()",
+                    "updated_at":      now_iso,
                 })
             if rows:
                 sess_resp = (
@@ -212,7 +219,7 @@ class handler(BaseHTTPRequestHandler):
                     "mtime":        float(f.get("mtime") or 0.0),
                     "lines":        int(f.get("lines") or 0),
                     "content_path": f.get("content_path"),
-                    "uploaded_at":  "now()",
+                    "uploaded_at":  now_iso,
                 })
             if file_rows:
                 (
