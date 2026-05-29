@@ -18,15 +18,15 @@ Three Python files at the repo root, stdlib only, no `pip install` step. Python 
 
 Use `python` on Windows, `python3` on macOS/Linux. Both work the same.
 
-### Hosted team dashboard (server + collector + installer)
+### Hosted team dashboard (server)
 
-Three subdirectories that together make a multi-user SaaS-style deployment.
+[server/](server/) — Vercel project. Python serverless functions under `server/api/` + static HTML in `server/public/`. Uses Supabase (Postgres + Storage + Auth). Schema migrations in `server/supabase/migrations/`. See [SETUP.md](SETUP.md) for end-to-end deployment.
 
-- [server/](server/) — Vercel project. Python serverless functions under `server/api/` + static HTML in `server/public/`. Uses Supabase (Postgres + Storage + Auth). Schema migrations in `server/supabase/migrations/`. See [SETUP.md](SETUP.md) for deployment.
-- [collector/](collector/) — stdlib-only Python agent that runs on each end-user's Windows machine. Scans JSONL, uploads raw files to Supabase Storage, posts parsed metadata to `/api/ingest`. CLI: `python collector.py {push|status|reset-state}`.
-- [installer/](installer/) — PyInstaller + Inno Setup to bundle the collector into a single Windows `.exe` installer with consent screen, Scheduled Task registration, and silent-install support for IT fleet rollouts.
+> **The end-user collector + Windows installer live in a separate repo:**
+> [claude-usage-exe](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe).
+> That repo holds `collector.py` (stdlib-only agent that uploads to this server) and the Inno Setup wrapper that produces the distributable `.exe`. Pre-built installers are on its [Releases page](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe/releases).
 
-Pricing math, model-priority rule, and dedup-by-`message_id` invariant are duplicated between the local tool and the hosted server intentionally — they're shipped independently. Keep both in sync when you change either.
+Pricing math, model-priority rule, and dedup-by-`message_id` invariant are duplicated between the local tool, the hosted server, and the collector in the exe repo intentionally — they're shipped independently. Keep all three in sync when you change any one.
 
 ## Common commands
 
@@ -84,7 +84,7 @@ These three things will bite you if you don't know them:
 
 Costs are computed **per turn** (each turn knows its own model), then summed. This is true in both the CLI ([cli.py](cli.py) `calc_cost`) and the dashboard JS ([dashboard.py](dashboard.py) `calcCost` inside the embedded HTML). Aggregating tokens first and applying a single price is wrong for sessions that span multiple models.
 
-Pricing is duplicated in **four** places that must stay in sync:
+Pricing is duplicated in **three** places in this repo that must stay in sync (plus the collector in the exe repo, where it's currently unused — token data leaves the collector before cost calc):
 - [cli.py](cli.py) `PRICING` dict (Python, local tool)
 - [dashboard.py](dashboard.py) `PRICING` const inside `HTML_TEMPLATE` (JavaScript, local tool)
 - [server/lib/pricing.py](server/lib/pricing.py) `PRICING` dict (Python, hosted server)
@@ -121,11 +121,11 @@ The `recompute_session_totals(uuid)` Postgres function (migration [0002](server/
 
 ### Collector → server contract
 
-Collector uploads raw JSONL files **first** (direct PUT to Supabase Storage via signed URL from `/api/upload-url`), **then** posts parsed metadata to `/api/ingest`. The metadata payload references uploaded files by `content_path` so the dashboard can re-fetch raw content on demand without re-shipping it on every batch.
+The collector (in the [claude-usage-exe](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe) repo) uploads raw JSONL files **first** (direct PUT to Supabase Storage via signed URL from `/api/upload-url`), **then** posts parsed metadata to `/api/ingest`. The metadata payload references uploaded files by `content_path` so the dashboard can re-fetch raw content on demand without re-shipping it on every batch.
 
-Batch size is capped at 100 turns/request in [collector/collector.py](collector/collector.py) `INGEST_BATCH_SIZE`. Vercel's body limit is 4.5 MB on Hobby/Pro — turns are small (~1 KB metadata each), but if you re-introduce inline content, drop this aggressively or you'll hit `HTTP 413`.
+Batch size is capped at 100 turns/request in [`collector.py`](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe/blob/main/collector/collector.py) `INGEST_BATCH_SIZE`. Vercel's body limit is 4.5 MB on Hobby/Pro — turns are small (~1 KB metadata each), but if you re-introduce inline content, drop this aggressively or you'll hit `HTTP 413`.
 
-Local state lives in `%LOCALAPPDATA%\ClaudeUsageCollector\state.json` (per-machine, never committed). Deleting it forces a full re-upload; server dedupes on `message_id` so it's safe but expensive in Storage egress.
+Per-machine state lives in `%LOCALAPPDATA%\ClaudeUsageCollector\state.json`. Deleting it forces a full re-upload; the server dedupes on `message_id` so it's safe but expensive in Storage egress.
 
 ## Testing notes
 

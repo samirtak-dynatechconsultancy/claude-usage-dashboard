@@ -19,28 +19,14 @@ server.log
 *.db
 *.db-journal
 
-# Per-machine collector state (push history) — never commit
-collector/state.json
-collector/config.local.json
-
 # ── Secrets ────────────────────────────────────────────────────────────────
 .env
 .env.local
 .env.*.local
 server/.env
-collector/.env
-installer/team_token.txt
 
 # ── Vercel ─────────────────────────────────────────────────────────────────
 .vercel/
-
-# ── Build artifacts ────────────────────────────────────────────────────────
-# PyInstaller output
-collector/build/
-collector/dist/
-collector/*.spec
-installer/Output/
-installer/build/
 
 # ── Editor / OS ────────────────────────────────────────────────────────────
 .vscode/

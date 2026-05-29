@@ -128,28 +128,23 @@ to your real Vercel URL (the placeholder from step 1c).
 
 ---
 
-## 3. Build & distribute the installer
+## 3. Distribute the installer to teammates
 
-### 3a. Build on a Windows box
+> **The collector + installer live in a separate repo:**
+> [claude-usage-exe](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe).
+> Pre-built installers are on its [Releases page](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe/releases/latest).
+> You don't need to build anything yourself unless you want to customize.
 
-```powershell
-cd installer
-powershell -ExecutionPolicy Bypass -File .\build_exe.ps1
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" .\setup.iss
-```
+Send teammates the download link, or stage the installer for fleet rollout.
 
-Output: `installer\Output\ClaudeUsageCollector-Setup-1.0.0.exe`.
+**Interactive install:** the user double-clicks the `.exe` from the Releases
+page. The wizard:
+- Shows a consent screen explaining what data is collected
+- Asks for the **server URL** (your Vercel deployment from step 2) and the
+  **ingest token** (the `INGEST_TOKEN` you set on Vercel in step 2c)
+- Installs + registers a Scheduled Task to push every 15 min
 
-(Install [Inno Setup 6](https://jrsoftware.org/isinfo.php) once, then this
-is a 30-second command. The PyInstaller bundle weighs ~10 MB; the final
-installer adds ~2 MB of overhead.)
-
-### 3b. Send to teammates
-
-**Interactive install:** double-click the .exe. The wizard prompts for
-server URL and ingest token.
-
-**Silent install (GPO / PDQ / Intune):**
+**Silent install (GPO / PDQ / Intune / SCCM):**
 
 ```powershell
 ClaudeUsageCollector-Setup-1.0.0.exe `
@@ -158,8 +153,14 @@ ClaudeUsageCollector-Setup-1.0.0.exe `
     /TOKEN=YOUR_INGEST_TOKEN
 ```
 
-Within 15 minutes (or immediately, since the installer triggers a first
-push), the dashboard will start filling in for that user.
+Within 15 minutes — or immediately, since the installer triggers a first
+push — the dashboard will start filling in for that user.
+
+### Building the installer yourself (optional)
+
+If you need to customize the installer, see
+[claude-usage-exe/installer/README.md](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe/blob/main/installer/README.md)
+for the PyInstaller + Inno Setup build steps.
 
 ---
 
@@ -179,8 +180,11 @@ After step 3 on a test machine, you should see:
 
 ### Quick smoke test on the collector (without installing)
 
+Clone [claude-usage-exe](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe),
+then:
+
 ```powershell
-cd collector
+cd claude-usage-exe\collector
 copy config.example.json config.json
 notepad config.json     # paste your server URL + ingest token
 python collector.py status
@@ -205,7 +209,8 @@ Vercel. Regenerate one, set it in Vercel, redeploy, and reissue installers.
 
 **Collector logs `HTTP 413` from /api/ingest**  
 Vercel rejected the body for being too large. Reduce `INGEST_BATCH_SIZE`
-in [collector/collector.py](collector/collector.py) (default 100; try 50).
+in [claude-usage-exe/collector/collector.py](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe/blob/main/collector/collector.py)
+(default 100; try 50), rebuild the installer, redistribute.
 
 **Dashboard charts are empty but the table has sessions**  
 Range filter is excluding them. Click **All**.

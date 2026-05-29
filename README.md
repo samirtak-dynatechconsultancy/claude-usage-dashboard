@@ -11,6 +11,15 @@ Claude Code writes detailed usage logs locally — token counts, models, session
 
 **Created by:** [The Product Compass Newsletter](https://www.productcompass.pm)
 
+> **Team mode — hosted multi-user dashboard.** This repo also contains a
+> Vercel + Supabase server (`server/`) that aggregates usage from every
+> teammate's machine. See [**SETUP.md**](SETUP.md) for deployment. The
+> Windows collector + installer that pushes data into it lives in a
+> separate repo:
+> [claude-usage-exe](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe)
+> (download the `.exe` from its
+> [Releases page](https://github.com/samirtak-dynatechconsultancy/claude-usage-exe/releases/latest)).
+
 ---
 
 ## What this tracks
