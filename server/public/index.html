@@ -132,6 +132,10 @@
 <header>
   <h1>Claude Code Usage Dashboard</h1>
   <div class="header-right">
+    <button class="signout-btn" id="refresh-btn" onclick="refreshNow()"
+            title="Refresh now (auto-refreshes every 30 seconds)">
+      &#x21bb; <span id="last-updated">syncing…</span>
+    </button>
     <span id="viewer-email" class="muted"></span>
     <button class="signout-btn" onclick="signOut()">Sign out</button>
   </div>
@@ -224,6 +228,16 @@ let selectedUser = '';
 let selectedModels = null;  // null = all
 const charts = {};
 
+// ─── Auto-refresh polling ───────────────────────────────────────────────────
+// We re-fetch /api/data on a timer so the dashboard stays current without
+// the user hitting reload. The collector only pushes every 15 min, so 30s
+// polling captures new data ~within half a poll cycle of arrival.
+const POLL_INTERVAL_MS = 30_000;
+let pollHandle = null;
+let tickHandle = null;
+let loadInProgress = false;   // guard against piled-up requests on slow links
+let lastUpdatedAt = null;
+
 // ─── Init ───────────────────────────────────────────────────────────────────
 async function init() {
   try {
@@ -262,46 +276,118 @@ async function init() {
   await loadData();
   document.getElementById('status').style.display = 'none';
   document.getElementById('app').style.display = '';
+
+  // Start auto-refresh AFTER first successful load.
+  startPolling();
+  // Pause polling when the tab is hidden — no point wasting bandwidth or
+  // hitting Vercel quota on a backgrounded tab. On re-show, refresh once
+  // immediately so the user sees fresh data instead of stale.
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopPolling();
+    } else {
+      refreshNow();
+      startPolling();
+    }
+  });
+  // Tick the "Xs ago" label every second so it stays accurate between fetches.
+  tickHandle = setInterval(updateLastSeenLabel, 1000);
 }
 
 function authHeaders() {
   return { 'Authorization': 'Bearer ' + session.access_token };
 }
 
-async function loadData() {
-  const qs = selectedUser ? '?user_id=' + encodeURIComponent(selectedUser) : '';
-  const res = await fetch('/api/data' + qs, { headers: authHeaders() });
-  if (!res.ok) {
-    return showStatus('Failed to load data: HTTP ' + res.status, true);
-  }
-  rawData = await res.json();
+async function loadData(isPoll = false) {
+  // Skip if a previous fetch is still in flight — prevents request pileup
+  // on slow links or if the user spam-clicks the refresh button.
+  if (loadInProgress) return;
+  loadInProgress = true;
 
-  // Populate user filter (first time only)
-  const sel = document.getElementById('user-filter');
-  if (sel.options.length <= 1) {
+  try {
+    const qs = selectedUser ? '?user_id=' + encodeURIComponent(selectedUser) : '';
+    const res = await fetch('/api/data' + qs, { headers: authHeaders() });
+    if (!res.ok) {
+      // Hard-fail the first load (user needs to know auth is broken). Stay
+      // quiet on poll failures so a flaky network blip doesn't surface as
+      // a scary error — the next tick retries.
+      if (!isPoll) showStatus('Failed to load data: HTTP ' + res.status, true);
+      return;
+    }
+    rawData = await res.json();
+    lastUpdatedAt = new Date();
+
+    // Preserve current filter selections before rebuilding dropdowns,
+    // otherwise auto-refresh would wipe whatever the user picked.
+    const userSelEl = document.getElementById('user-filter');
+    const prevUser  = userSelEl.value;
+    const msSelEl   = document.getElementById('model-filter');
+    const prevModels = new Set(
+      Array.from(msSelEl.selectedOptions).map(o => o.value).filter(Boolean)
+    );
+
+    // ── Rebuild user dropdown (new users may have started using Claude) ──
+    userSelEl.innerHTML = '<option value="">All users</option>';
     for (const u of rawData.users) {
       const opt = document.createElement('option');
       opt.value = u.id;
       opt.textContent = u.label + (u.email ? ' (' + u.email + ')' : '');
-      sel.appendChild(opt);
+      if (u.id === prevUser) opt.selected = true;
+      userSelEl.appendChild(opt);
     }
-  }
 
-  // Populate model filter (rebuild each time as model list can grow)
-  const ms = document.getElementById('model-filter');
-  ms.innerHTML = '';
-  const allOpt = document.createElement('option');
-  allOpt.value = ''; allOpt.textContent = 'All models'; allOpt.selected = true;
-  ms.appendChild(allOpt);
-  for (const m of rawData.all_models) {
-    const opt = document.createElement('option');
-    opt.value = m; opt.textContent = m;
-    ms.appendChild(opt);
-  }
-  ms.size = 1;
-  selectedModels = null;
+    // ── Rebuild model dropdown (new models may have appeared) ────────────
+    msSelEl.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = ''; allOpt.textContent = 'All models';
+    if (prevModels.size === 0) allOpt.selected = true;
+    msSelEl.appendChild(allOpt);
+    for (const m of rawData.all_models) {
+      const opt = document.createElement('option');
+      opt.value = m; opt.textContent = m;
+      if (prevModels.has(m)) opt.selected = true;
+      msSelEl.appendChild(opt);
+    }
+    msSelEl.size = 1;
+    // Restore the selectedModels Set (was being reset to null before).
+    selectedModels = prevModels.size ? prevModels : null;
 
-  applyFilter();
+    applyFilter();
+    updateLastSeenLabel();
+  } catch (e) {
+    if (!isPoll) showStatus('Network error: ' + e.message, true);
+    // else: swallow — the tick label will keep ageing so the user sees
+    // we're falling behind ("3m ago", "5m ago", ...).
+  } finally {
+    loadInProgress = false;
+  }
+}
+
+// ─── Polling helpers ────────────────────────────────────────────────────────
+async function refreshNow() {
+  await loadData(false);
+}
+
+function startPolling() {
+  if (pollHandle) return;   // already running
+  pollHandle = setInterval(() => {
+    if (!document.hidden) loadData(true);
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+}
+
+function updateLastSeenLabel() {
+  const el = document.getElementById('last-updated');
+  if (!el) return;
+  if (!lastUpdatedAt) { el.textContent = 'syncing…'; return; }
+  const s = Math.round((Date.now() - lastUpdatedAt.getTime()) / 1000);
+  if      (s < 5)      el.textContent = 'just now';
+  else if (s < 60)     el.textContent = s + 's ago';
+  else if (s < 3600)   el.textContent = Math.floor(s / 60) + 'm ago';
+  else                 el.textContent = Math.floor(s / 3600) + 'h ago';
 }
 
 async function onUserChange() {
