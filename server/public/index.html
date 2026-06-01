@@ -177,6 +177,61 @@
   }
   .help-tooltip.show { opacity: 1; }
 
+  /* ── Custom multi-select (model filter) ────────────────────────────── */
+  .multiselect { position: relative; display: inline-block; min-width: 180px; }
+  .multiselect-trigger {
+    width: 100%;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 5px 10px; border-radius: 6px; font-size: 13px;
+    font-family: inherit; cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    text-align: left;
+  }
+  .multiselect-trigger:hover { border-color: var(--accent); }
+  .multiselect-trigger.open  { border-color: var(--accent); }
+  .multiselect-caret { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .multiselect-menu {
+    position: absolute; top: calc(100% + 4px); left: 0;
+    min-width: 100%; width: max-content; max-width: 360px;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; z-index: 30;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+    max-height: 360px; overflow-y: auto;
+  }
+  .multiselect-actions {
+    display: flex; gap: 6px; padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .multiselect-actions button {
+    flex: 1;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); padding: 4px 10px; border-radius: 4px;
+    font-size: 11px; cursor: pointer; font-family: inherit;
+  }
+  .multiselect-actions button:hover { color: var(--text); border-color: var(--accent); }
+  .multiselect-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 11px; cursor: pointer;
+    font-size: 13px; color: var(--text);
+    border-bottom: 1px solid var(--border);
+  }
+  .multiselect-row:last-child { border-bottom: none; }
+  .multiselect-row:hover { background: rgba(255,255,255,0.04); }
+  .multiselect-row .check {
+    width: 14px; height: 14px; border: 1px solid var(--muted);
+    border-radius: 3px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 10px; color: white;
+  }
+  .multiselect-row.checked .check {
+    background: var(--accent); border-color: var(--accent);
+  }
+  .multiselect-row.checked .check::after { content: '✓'; }
+  .multiselect-row .label {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: monospace; font-size: 12px;
+  }
+
   /* ── Searchable user combobox ──────────────────────────────────────── */
   .user-combobox {
     position: relative; display: inline-block; min-width: 240px;
@@ -312,9 +367,20 @@
   </div>
   <div class="filter-sep"></div>
   <div class="filter-label">Model</div>
-  <select id="model-filter" onchange="onModelChange()" multiple size="1" style="min-width: 180px;">
-    <option value="">All models</option>
-  </select>
+  <div class="multiselect" id="model-multiselect">
+    <button type="button" class="multiselect-trigger" id="model-trigger"
+            onclick="toggleModelMenu(event)" title="Filter by model">
+      <span id="model-trigger-label">All models</span>
+      <span class="multiselect-caret">▾</span>
+    </button>
+    <div class="multiselect-menu" id="model-menu" hidden>
+      <div class="multiselect-actions">
+        <button type="button" onclick="setAllModels(true)">Select all</button>
+        <button type="button" onclick="setAllModels(false)">Clear</button>
+      </div>
+      <div id="model-menu-list"></div>
+    </div>
+  </div>
   <div class="filter-sep"></div>
   <div class="filter-label">Range</div>
   <div class="range-group">
@@ -501,36 +567,18 @@ async function loadData(isPoll = false) {
     rawData = await res.json();
     lastUpdatedAt = new Date();
 
-    // Preserve current filter selections before rebuilding dropdowns,
-    // otherwise auto-refresh would wipe whatever the user picked.
-    const msSelEl   = document.getElementById('model-filter');
-    const prevModels = new Set(
-      Array.from(msSelEl.selectedOptions).map(o => o.value).filter(Boolean)
-    );
-
     // ── User combobox: refresh in place ──────────────────────────────────
-    // The selected user (selectedUser) is the source of truth — the input
-    // text reflects it. If the dropdown is open we re-render visible rows.
     syncUserComboboxInput();
     if (!document.getElementById('user-results').hidden) {
       renderUserResults(document.getElementById('user-search').value);
     }
 
-    // ── Rebuild model dropdown (new models may have appeared) ────────────
-    msSelEl.innerHTML = '';
-    const allOpt = document.createElement('option');
-    allOpt.value = ''; allOpt.textContent = 'All models';
-    if (prevModels.size === 0) allOpt.selected = true;
-    msSelEl.appendChild(allOpt);
-    for (const m of rawData.all_models) {
-      const opt = document.createElement('option');
-      opt.value = m; opt.textContent = m;
-      if (prevModels.has(m)) opt.selected = true;
-      msSelEl.appendChild(opt);
-    }
-    msSelEl.size = 1;
-    // Restore the selectedModels Set (was being reset to null before).
-    selectedModels = prevModels.size ? prevModels : null;
+    // ── Model multi-select: refresh menu + label in place ────────────────
+    // selectedModels is the source of truth (Set or null=all). The new model
+    // list may have grown -- if a previously-selected model disappears, it
+    // stays in selectedModels until the next user interaction, harmless.
+    renderModelMenu();
+    updateModelTriggerLabel();
 
     applyFilter();
     updateLastSeenLabel();
@@ -836,12 +884,92 @@ function setupUserCombobox() {
   });
 }
 
-function onModelChange() {
-  const opts = Array.from(document.getElementById('model-filter').selectedOptions);
-  const picked = opts.map(o => o.value).filter(Boolean);
-  selectedModels = picked.length ? new Set(picked) : null;
+// ── Model multi-select behaviour ───────────────────────────────────────────
+// State: selectedModels (Set<string>) | null. null means "all models".
+// The visual trigger reflects state; the popup menu has a checkbox per model.
+
+function toggleModelMenu(e) {
+  if (e) e.stopPropagation();
+  const menu    = document.getElementById('model-menu');
+  const trigger = document.getElementById('model-trigger');
+  const opening = menu.hidden;
+  menu.hidden = !opening;
+  trigger.classList.toggle('open', opening);
+  if (opening) renderModelMenu();
+}
+
+function closeModelMenu() {
+  document.getElementById('model-menu').hidden = true;
+  document.getElementById('model-trigger').classList.remove('open');
+}
+
+function renderModelMenu() {
+  if (!rawData) return;
+  const list = document.getElementById('model-menu-list');
+  const models = rawData.all_models || [];
+  list.innerHTML = models.map(m => {
+    const isSelected = !selectedModels || selectedModels.has(m);
+    return `
+      <div class="multiselect-row ${isSelected ? 'checked' : ''}"
+           onclick="toggleModelPick('${esc(m)}', event)">
+        <span class="check"></span>
+        <span class="label">${esc(m)}</span>
+      </div>
+    `;
+  }).join('') || '<div class="multiselect-row" style="cursor:default;color:var(--muted);">No models yet.</div>';
+}
+
+function toggleModelPick(m, e) {
+  if (e) e.stopPropagation();
+  // First click on any specific model when state is "all" -> materialize
+  // the full set so we can subtract from it.
+  if (!selectedModels) {
+    selectedModels = new Set(rawData.all_models || []);
+  }
+  if (selectedModels.has(m)) selectedModels.delete(m);
+  else                       selectedModels.add(m);
+
+  // If user manually re-picked every available model, collapse back to
+  // the implicit "null = all" state. Keeps URL/state minimal.
+  if (rawData.all_models && selectedModels.size === rawData.all_models.length) {
+    selectedModels = null;
+  }
+  // If they cleared everything, also flip to null (empty = no filter).
+  if (selectedModels && selectedModels.size === 0) {
+    selectedModels = null;
+  }
+
+  renderModelMenu();
+  updateModelTriggerLabel();
   applyFilter();
 }
+
+function setAllModels(on) {
+  selectedModels = on ? null : new Set();    // null = all selected, empty = none (we coerce back to null below)
+  if (selectedModels && selectedModels.size === 0) selectedModels = null;
+  renderModelMenu();
+  updateModelTriggerLabel();
+  applyFilter();
+}
+
+function updateModelTriggerLabel() {
+  const label = document.getElementById('model-trigger-label');
+  if (!label) return;
+  if (!selectedModels) {
+    label.textContent = 'All models';
+    return;
+  }
+  const n = selectedModels.size;
+  if (n === 0)   { label.textContent = 'No models'; return; }
+  if (n === 1)   { label.textContent = [...selectedModels][0]; return; }
+  label.textContent = n + ' models selected';
+}
+
+// Close menu on outside click
+document.addEventListener('click', (e) => {
+  const cb = document.getElementById('model-multiselect');
+  if (cb && !cb.contains(e.target)) closeModelMenu();
+});
 
 function showStatus(msg, isError) {
   const el = document.getElementById('status');
