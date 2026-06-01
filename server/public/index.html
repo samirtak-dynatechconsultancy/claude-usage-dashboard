@@ -115,6 +115,54 @@
   .msg-bubble pre { white-space: pre-wrap; word-break: break-word; font-family: inherit;
                     font-size: 13px; line-height: 1.5; }
 
+  /* Briefing card at the top of the conversation modal */
+  .briefing {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; margin-bottom: 12px;
+  }
+  .briefing-title {
+    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 8px;
+  }
+  .briefing-stats {
+    display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted);
+    font-size: 12px; margin-bottom: 10px;
+  }
+  .briefing-stats strong { color: var(--text); font-weight: 600; }
+  .tools-row {
+    display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;
+  }
+  .tool-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(217,119,87,0.10); color: var(--accent);
+    padding: 3px 9px; border-radius: 12px; font-size: 11px;
+    font-family: monospace;
+  }
+  .tool-pill .count { color: var(--muted); }
+  .continuation-banner {
+    background: rgba(74,222,128,0.08); border-left: 3px solid var(--green);
+    color: var(--text); padding: 8px 12px; margin-bottom: 12px;
+    font-size: 12px; border-radius: 4px;
+  }
+  .continuation-banner strong { color: var(--green); }
+
+  /* Expandable "Show all N more" details */
+  details.full-convo {
+    margin-top: 4px;
+    border-top: 1px dashed var(--border); padding-top: 12px;
+  }
+  details.full-convo summary {
+    cursor: pointer; color: var(--muted); font-size: 12px;
+    padding: 6px 8px; user-select: none;
+    list-style: none;
+  }
+  details.full-convo summary::-webkit-details-marker { display: none; }
+  details.full-convo summary::before {
+    content: '▸ '; color: var(--accent);
+  }
+  details.full-convo[open] summary::before { content: '▾ '; }
+  details.full-convo summary:hover { color: var(--text); }
+
   #status { text-align: center; padding: 60px; color: var(--muted); }
   #status.error { color: var(--error); }
 
@@ -677,33 +725,174 @@ async function openSession(uuid, user, project) {
   }
 }
 
-function renderConversation(records) {
-  const html = records.map(r => {
-    if (r._error) return `<div class="muted">[file fetch error: ${esc(r._error)}]</div>`;
-    if (r.type !== 'user' && r.type !== 'assistant') return '';
-    const msg = r.message || {};
-    const role = r.type === 'user' ? 'User' : 'Assistant';
+// ── Helpers used by renderConversation ────────────────────────────────────
 
-    // message.content can be a string OR an array of content blocks
-    let text = '';
-    if (typeof msg.content === 'string') text = msg.content;
-    else if (Array.isArray(msg.content)) {
-      text = msg.content.map(c => {
-        if (c.type === 'text') return c.text || '';
-        if (c.type === 'tool_use') return `[tool_use: ${c.name}]\n` + JSON.stringify(c.input || {}, null, 2);
-        if (c.type === 'tool_result') {
-          const out = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || {}, null, 2);
-          return `[tool_result for ${c.tool_use_id || '?'}]\n` + out;
-        }
-        return '[' + (c.type || 'unknown') + ']';
-      }).join('\n\n');
+// Pull every text-block out of a message.content (string or block array)
+// and concatenate. Used both for previewing and for the full conversation.
+function extractText(msgContent) {
+  if (typeof msgContent === 'string') return msgContent;
+  if (!Array.isArray(msgContent)) return '';
+  return msgContent.map(c => {
+    if (c.type === 'text') return c.text || '';
+    if (c.type === 'tool_use') return `[tool_use: ${c.name}]\n` + JSON.stringify(c.input || {}, null, 2);
+    if (c.type === 'tool_result') {
+      const out = typeof c.content === 'string' ? c.content : JSON.stringify(c.content || {}, null, 2);
+      return `[tool_result for ${c.tool_use_id || '?'}]\n` + out;
     }
-    return `<div class="msg-bubble msg-${r.type}">
-      <div class="role">${role}${r.timestamp ? ' · ' + esc(r.timestamp) : ''}</div>
-      <pre>${esc(text || '(empty)')}</pre>
+    return '[' + (c.type || 'unknown') + ']';
+  }).join('\n\n');
+}
+
+// Just the text-only portion (no tool blocks) for previews.
+function extractPlainText(msgContent) {
+  if (typeof msgContent === 'string') return msgContent;
+  if (!Array.isArray(msgContent)) return '';
+  return msgContent
+    .filter(c => c.type === 'text')
+    .map(c => c.text || '')
+    .join('\n')
+    .trim();
+}
+
+function renderMessageBubble(r) {
+  if (r._error) return `<div class="muted">[file fetch error: ${esc(r._error)}]</div>`;
+  if (r.type !== 'user' && r.type !== 'assistant') return '';
+  const role = r.type === 'user' ? 'User' : 'Assistant';
+  const text = extractText((r.message || {}).content);
+  return `<div class="msg-bubble msg-${r.type}">
+    <div class="role">${role}${r.timestamp ? ' · ' + esc(r.timestamp) : ''}</div>
+    <pre>${esc(text || '(empty)')}</pre>
+  </div>`;
+}
+
+// Claude Code prepends this exact string when a session is resumed after
+// /compact, --resume, or auto-compaction. Detecting it lets us skip the
+// "summary of a summary" briefing and surface the canonical context.
+const CONTINUATION_MARKER = 'This session is being continued from a previous conversation';
+
+function renderConversation(records) {
+  const root = document.getElementById('modal-content');
+  if (!records || records.length === 0) {
+    root.innerHTML = '<div class="muted">No content available for this session.</div>';
+    return;
+  }
+
+  // ── Compute briefing data in one pass ────────────────────────────────
+  const toolsUsed = {};       // { toolName: count }
+  let firstTs = null, lastTs = null;
+  let firstUserIdx = -1, firstAssistantIdx = -1;
+  let continuationIdx = -1;   // Where Claude Code's resume-context message is
+
+  for (let i = 0; i < records.length; i++) {
+    const r = records[i];
+    if (r.type !== 'user' && r.type !== 'assistant') continue;
+
+    // Track timestamp range
+    if (r.timestamp) {
+      if (!firstTs || r.timestamp < firstTs) firstTs = r.timestamp;
+      if (!lastTs  || r.timestamp > lastTs)  lastTs  = r.timestamp;
+    }
+
+    // Aggregate tool_use blocks
+    const content = (r.message || {}).content;
+    if (Array.isArray(content)) {
+      for (const b of content) {
+        if (b && b.type === 'tool_use' && b.name) {
+          toolsUsed[b.name] = (toolsUsed[b.name] || 0) + 1;
+        }
+      }
+    }
+
+    // First user / assistant indices
+    if (r.type === 'user'      && firstUserIdx      < 0) firstUserIdx      = i;
+    if (r.type === 'assistant' && firstAssistantIdx < 0) firstAssistantIdx = i;
+
+    // Detect Claude Code's continuation/compact context marker
+    if (continuationIdx < 0) {
+      const plain = extractPlainText(content);
+      if (plain.startsWith(CONTINUATION_MARKER)) continuationIdx = i;
+    }
+  }
+
+  // ── Briefing header ───────────────────────────────────────────────────
+  const totalMsgs = records.filter(r => r.type === 'user' || r.type === 'assistant').length;
+  const durationMin = firstTs && lastTs
+    ? Math.round((new Date(lastTs) - new Date(firstTs)) / 60000)
+    : 0;
+  const toolNames = Object.entries(toolsUsed).sort((a, b) => b[1] - a[1]);
+
+  const toolsHtml = toolNames.length
+    ? `<div class="tools-row">${toolNames.map(([name, count]) =>
+        `<span class="tool-pill">${esc(name)}<span class="count">×${count}</span></span>`).join('')}</div>`
+    : '<div class="muted" style="font-size:11px;">No tools used in this session.</div>';
+
+  let briefingHtml = `
+    <div class="briefing">
+      <div class="briefing-title">Session briefing</div>
+      <div class="briefing-stats">
+        <span><strong>${totalMsgs}</strong> messages</span>
+        <span>·</span>
+        <span><strong>${durationMin}</strong> min duration</span>
+        <span>·</span>
+        <span><strong>${toolNames.length}</strong> distinct tools</span>
+        <span>·</span>
+        <span><strong>${toolNames.reduce((a, [, c]) => a + c, 0)}</strong> total tool calls</span>
+      </div>
+      <div class="briefing-title" style="margin-top:10px;">Tools used</div>
+      ${toolsHtml}
+    </div>
+  `;
+
+  // ── Pick what to show by default ─────────────────────────────────────
+  // Priority: (1) continuation context marker, (2) first user + first assistant.
+  let primaryHtml = '';
+  let primaryIndices = new Set();
+  let bannerHtml = '';
+
+  if (continuationIdx >= 0) {
+    // Compact / resume continuation case — show the marker message
+    // alone as the "starting context", because earlier messages were
+    // already summarized into it.
+    bannerHtml = `<div class="continuation-banner">
+      <strong>↻ Continued session.</strong> Claude Code injected a summary of the prior
+      conversation as the opening context — that's what's shown below.
     </div>`;
-  }).join('');
-  document.getElementById('modal-content').innerHTML = html || '<div class="muted">No content available.</div>';
+    primaryHtml = renderMessageBubble(records[continuationIdx]);
+    primaryIndices.add(continuationIdx);
+    // If an assistant response follows, include it.
+    for (let i = continuationIdx + 1; i < records.length; i++) {
+      if (records[i].type === 'assistant') {
+        primaryHtml += renderMessageBubble(records[i]);
+        primaryIndices.add(i);
+        break;
+      }
+    }
+  } else {
+    // Standard case — first user request + first assistant response
+    if (firstUserIdx >= 0) {
+      primaryHtml += renderMessageBubble(records[firstUserIdx]);
+      primaryIndices.add(firstUserIdx);
+    }
+    if (firstAssistantIdx >= 0 && firstAssistantIdx !== firstUserIdx) {
+      primaryHtml += renderMessageBubble(records[firstAssistantIdx]);
+      primaryIndices.add(firstAssistantIdx);
+    }
+  }
+
+  // ── Remainder, collapsed in <details> ────────────────────────────────
+  const remainingRecords = records.filter((r, i) => {
+    if (primaryIndices.has(i)) return false;
+    return r.type === 'user' || r.type === 'assistant';
+  });
+  const remainingHtml = remainingRecords.map(renderMessageBubble).join('');
+  const detailsHtml = remainingRecords.length
+    ? `<details class="full-convo">
+        <summary>Show all ${remainingRecords.length} more message${remainingRecords.length === 1 ? '' : 's'} in this session</summary>
+        ${remainingHtml}
+      </details>`
+    : '';
+
+  root.innerHTML = briefingHtml + bannerHtml + primaryHtml + detailsHtml;
 }
 
 function closeModal() {
