@@ -146,6 +146,39 @@
   }
   .continuation-banner strong { color: var(--green); }
 
+  /* ── Help tooltip on column / card headers ─────────────────────────── */
+  .help {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 13px; height: 13px;
+    margin-left: 4px; vertical-align: middle;
+    border: 1px solid var(--muted); border-radius: 50%;
+    color: var(--muted); font-size: 9px; font-weight: 600;
+    font-family: inherit; cursor: help;
+    position: relative;
+    text-transform: none; letter-spacing: 0;
+  }
+  .help::after { content: '?'; line-height: 1; }
+  .help:hover { color: var(--accent); border-color: var(--accent); }
+  /* The tooltip itself */
+  .help:hover::before {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 8px); left: 50%;
+    transform: translateX(-50%);
+    background: var(--card); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 12px; font-weight: 400;
+    text-transform: none; letter-spacing: 0; line-height: 1.45;
+    white-space: normal;
+    width: max-content; max-width: 280px;
+    z-index: 100; pointer-events: none;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  }
+  /* Edge-aware variants for right-most columns so tooltip doesn't clip */
+  .help.help-right:hover::before { left: auto; right: 0; transform: none; }
+  .help.help-left:hover::before  { left: 0; transform: none; }
+
   /* ── Searchable user combobox ──────────────────────────────────────── */
   .user-combobox {
     position: relative; display: inline-block; min-width: 240px;
@@ -300,37 +333,49 @@
 
   <div class="charts-grid">
     <div class="chart-card wide">
-      <h2 id="daily-chart-title">Daily Token Usage</h2>
+      <h2 id="daily-chart-title">Daily Token Usage<span class="help" title="Stacked daily totals across input, output, cache-read, and cache-write tokens. Click any series in the legend to toggle it." data-tip="Stacked daily totals across input, output, cache-read, and cache-write tokens. Click any series in the legend to toggle it."></span></h2>
       <div class="chart-wrap tall"><canvas id="chart-daily"></canvas></div>
     </div>
     <div class="chart-card">
-      <h2>By Model</h2>
+      <h2>By Model<span class="help" title="Total tokens (input + output) per model. Hover a slice for the exact value." data-tip="Total tokens (input + output) per model. Hover a slice for the exact value."></span></h2>
       <div class="chart-wrap"><canvas id="chart-model"></canvas></div>
     </div>
     <div class="chart-card">
-      <h2>Top Users by Tokens</h2>
+      <h2>Top Users by Tokens<span class="help" title="Top 10 teammates ranked by total (input + output) tokens in the selected range." data-tip="Top 10 teammates ranked by total (input + output) tokens in the selected range."></span></h2>
       <div class="chart-wrap"><canvas id="chart-user"></canvas></div>
     </div>
   </div>
 
   <div class="table-card">
-    <div class="section-title">Cost by Model</div>
+    <div class="section-title">Cost by Model<span class="help" data-tip="Per-model breakdown of usage and cost across the selected filters. Costs are computed per-turn — each turn priced at its own model's rate, then summed."></span></div>
     <table>
       <thead><tr>
-        <th>Model</th><th>Turns</th><th>Input</th><th>Output</th>
-        <th>Cache Read</th><th>Cache Write</th><th>Est. Cost</th>
+        <th>Model<span class="help" data-tip="The exact model string from Claude Code's JSONL (e.g. claude-sonnet-4-6)."></span></th>
+        <th>Turns<span class="help" data-tip="Number of assistant API responses billed against this model in the range."></span></th>
+        <th>Input<span class="help" data-tip="Raw prompt tokens (the words your team sent to Claude). Billed at the model's input rate."></span></th>
+        <th>Output<span class="help" data-tip="Tokens Claude generated in response. Typically billed at ~5× the input rate."></span></th>
+        <th>Cache Read<span class="help" data-tip="Tokens served from prompt cache instead of being re-processed. Billed at ~10% of input — higher is better, it saves money."></span></th>
+        <th>Cache Write<span class="help" data-tip="Tokens written to prompt cache for later reuse. Billed at ~125% of input. Pays off if the cached content is reused multiple times."></span></th>
+        <th>Est. Cost<span class="help help-right" data-tip="Sum of input × input rate + output × output rate + cache reads × cache-read rate + cache writes × cache-write rate. Based on Anthropic's published API pricing."></span></th>
       </tr></thead>
       <tbody id="model-cost-body"></tbody>
     </table>
   </div>
 
   <div class="table-card">
-    <div class="section-title">Recent Sessions <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view the conversation</span></div>
+    <div class="section-title">Recent Sessions<span class="help" data-tip="Up to 50 most recent sessions matching the current filters. Click any row to open the conversation drill-down."></span> <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view the conversation</span></div>
     <table>
       <thead><tr>
-        <th>User</th><th>Machine</th><th>Session</th><th>Project</th>
-        <th>Last Active</th><th>Model</th><th>Turns</th>
-        <th>Input</th><th>Output</th><th>Est. Cost</th>
+        <th>User<span class="help" data-tip="OS username of the teammate who ran Claude Code on the source machine."></span></th>
+        <th>Machine<span class="help" data-tip="Hostname of the laptop or desktop. One teammate can have multiple machines reporting."></span></th>
+        <th>Session<span class="help" data-tip="First 8 characters of the sessionId UUID. Useful for spotting which session in the local JSONL this row corresponds to."></span></th>
+        <th>Project<span class="help" data-tip="Derived from the working directory of the Claude Code session — typically the last two path components."></span></th>
+        <th>Last Active<span class="help" data-tip="Timestamp (UTC, truncated) of the last assistant turn in this session."></span></th>
+        <th>Model<span class="help" data-tip="Primary model used in this session. When multiple models appear, priority is opus > sonnet > haiku."></span></th>
+        <th>Turns<span class="help" data-tip="Number of assistant API responses in this session."></span></th>
+        <th>Input<span class="help" data-tip="Total input tokens (prompt) across the session."></span></th>
+        <th>Output<span class="help" data-tip="Total output tokens (assistant response) across the session."></span></th>
+        <th>Est. Cost<span class="help help-right" data-tip="Cost summed per-turn (each turn priced by its own model's rate)."></span></th>
       </tr></thead>
       <tbody id="sessions-body"></tbody>
     </table>
@@ -831,17 +876,24 @@ function applyFilter() {
 // ─── Renderers ──────────────────────────────────────────────────────────────
 function renderStats(t) {
   const cards = [
-    { label: 'Sessions',     value: t.sessions.toLocaleString() },
-    { label: 'Turns',        value: fmt(t.turns) },
-    { label: 'Input',        value: fmt(t.input) },
-    { label: 'Output',       value: fmt(t.output) },
-    { label: 'Cache Read',   value: fmt(t.cache_read) },
-    { label: 'Cache Write',  value: fmt(t.cache_creation) },
-    { label: 'Est. Cost',    value: fmtMoney(t.cost), color: '#4ade80' },
+    { label: 'Sessions',     value: t.sessions.toLocaleString(),
+      tip: "A 'session' is one Claude Code conversation. Counted across the currently selected user, model, and time range." },
+    { label: 'Turns',        value: fmt(t.turns),
+      tip: "A 'turn' is one assistant API response. Each turn has its own model and token counts. Many turns per session is normal." },
+    { label: 'Input',        value: fmt(t.input),
+      tip: "Raw prompt tokens sent to Claude (excluding cache reads and writes). Billed at the model's input rate." },
+    { label: 'Output',       value: fmt(t.output),
+      tip: "Tokens Claude generated in response. Typically billed at ~5× the input rate." },
+    { label: 'Cache Read',   value: fmt(t.cache_read),
+      tip: "Tokens served from prompt cache instead of being re-processed. Billed at ~10% of input. Higher is better — saves money." },
+    { label: 'Cache Write',  value: fmt(t.cache_creation),
+      tip: "Tokens written to prompt cache for later reuse. Billed at ~125% of input. Pays off if the cached content is reused multiple times." },
+    { label: 'Est. Cost',    value: fmtMoney(t.cost), color: '#4ade80',
+      tip: "Estimated total cost across all turns in range, computed per-turn (each turn priced at its own model's rate). Based on Anthropic's published API pricing." },
   ];
   document.getElementById('stats-row').innerHTML = cards.map(c => `
     <div class="stat-card">
-      <div class="label">${c.label}</div>
+      <div class="label">${esc(c.label)}<span class="help" data-tip="${esc(c.tip)}"></span></div>
       <div class="value" style="${c.color?'color:'+c.color:''}">${esc(c.value)}</div>
     </div>`).join('');
 }
@@ -1047,7 +1099,7 @@ function renderConversationFirstPage(body) {
 
   document.getElementById('modal-content').innerHTML = `
     <div class="briefing">
-      <div class="briefing-title">Session briefing</div>
+      <div class="briefing-title">Session briefing<span class="help help-left" data-tip="Top-line stats for this session: how many messages were exchanged, how long it ran, what tools were called."></span></div>
       <div class="briefing-stats">
         <span><strong>${total}</strong> messages</span>
         <span>·</span>
@@ -1057,11 +1109,11 @@ function renderConversationFirstPage(body) {
         <span>·</span>
         <span><strong>${totalCalls}</strong> total tool calls</span>
       </div>
-      <div class="briefing-title" style="margin-top:10px;">Tools used</div>
+      <div class="briefing-title" style="margin-top:10px;">Tools used<span class="help help-left" data-tip="Every tool Claude invoked in this session (Bash, Read, Edit, etc.) with how many times each was called."></span></div>
       ${toolsHtml}
       <div class="ai-summary" id="ai-summary-block">
         <div class="ai-summary-header">
-          <span class="ai-summary-title">AI summary</span>
+          <span class="ai-summary-title">AI summary<span class="help help-left" data-tip="Optional 3-5 sentence briefing generated by Azure Foundry. Click 'Generate summary' to run it (one-time cost per session, cached for future opens)."></span></span>
           <button class="ai-btn" id="ai-generate-btn"
                   onclick="generateAiSummary(false)">
             &#x2728; Generate summary
