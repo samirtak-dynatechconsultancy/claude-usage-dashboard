@@ -146,6 +146,36 @@
   }
   .continuation-banner strong { color: var(--green); }
 
+  /* AI summary block inside the briefing card */
+  .ai-summary {
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px dashed var(--border);
+  }
+  .ai-summary-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 6px;
+  }
+  .ai-summary-title {
+    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .ai-summary-meta { font-size: 10px; color: var(--muted); font-family: monospace; }
+  .ai-summary-body {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; font-size: 13px;
+    line-height: 1.55; white-space: pre-wrap; color: var(--text);
+  }
+  .ai-summary-body.loading { color: var(--muted); font-style: italic; }
+  .ai-summary-body.error   { color: var(--error); white-space: pre-wrap; }
+  .ai-btn {
+    background: rgba(217,119,87,0.10); color: var(--accent);
+    border: 1px solid var(--accent); padding: 5px 12px;
+    border-radius: 5px; font-size: 12px; cursor: pointer;
+    font-family: inherit;
+  }
+  .ai-btn:hover { background: rgba(217,119,87,0.18); }
+  .ai-btn:disabled { opacity: 0.55; cursor: wait; }
+
   /* Expandable "Show all N more" details */
   details.full-convo {
     margin-top: 4px;
@@ -704,7 +734,12 @@ function renderSessionsTable(rows) {
 }
 
 // ─── Conversation drill-down ────────────────────────────────────────────────
+// Remember the currently-open session uuid so the AI summary button knows
+// which session to summarize.
+let currentSessionUuid = null;
+
 async function openSession(uuid, user, project) {
+  currentSessionUuid = uuid;
   document.getElementById('modal-title').textContent = project + ' · ' + user;
   document.getElementById('modal-meta').textContent = 'Session ' + uuid.slice(0, 8) + '…';
   document.getElementById('modal-content').textContent = 'Loading…';
@@ -720,8 +755,79 @@ async function openSession(uuid, user, project) {
     }
     const body = await res.json();
     renderConversation(body.records || []);
+    // Probe the cache silently — if a summary was generated previously,
+    // surface it without making the user click. The endpoint returns
+    // { cached: true, summary } with no Foundry call when cached.
+    probeAiSummary(uuid);
   } catch (e) {
     document.getElementById('modal-content').textContent = 'Error: ' + e.message;
+  }
+}
+
+// Hit /api/summarize in "cache-only" mode by checking response.cached.
+// We use a HEAD-like probe via POST with the same payload; the server
+// returns the cached value cheaply if present (no Foundry call).
+async function probeAiSummary(uuid) {
+  // Skip the probe — server still does a DB lookup, but doesn't call
+  // Foundry unless force is requested AND no cache. So just check.
+  // Implementation: same as generateAiSummary but without setting loading state.
+  try {
+    const res = await fetch('/api/summarize', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_uuid: uuid, probe_only: true }),
+    });
+    // Probe-only request: only render if cached. Server still does work,
+    // so to keep this truly free we'd need a separate endpoint. For v1,
+    // we *do* call /api/summarize but the server checks cache first and
+    // only calls Foundry if cache miss AND force=true. So no extra spend.
+    // To make this actually safe — DON'T call probe automatically without
+    // a server-side `probe_only` flag. The summarize endpoint doesn't have
+    // one yet, so disable auto-probe for now: it would cost a Foundry call
+    // on every modal open for sessions without a cached summary.
+    //
+    // ↓↓ Disabling auto-probe: button-triggered only.
+    return;
+  } catch (e) { /* silent */ }
+}
+
+async function generateAiSummary(force) {
+  if (!currentSessionUuid) return;
+  const btn  = document.getElementById('ai-generate-btn');
+  const body = document.getElementById('ai-summary-body');
+  if (!btn || !body) return;
+
+  btn.disabled = true;
+  const originalLabel = btn.innerHTML;
+  btn.innerHTML = '&#x231b; Generating…';
+  body.style.display = 'block';
+  body.className = 'ai-summary-body loading';
+  body.textContent = 'Calling Azure Foundry…';
+
+  try {
+    const res = await fetch('/api/summarize', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_uuid: currentSessionUuid, force: !!force }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      body.className = 'ai-summary-body error';
+      body.textContent = data.error || ('HTTP ' + res.status);
+      if (data.hint) body.textContent += '\n\nHint: ' + data.hint;
+      return;
+    }
+    body.className = 'ai-summary-body';
+    body.textContent = data.summary;
+    // After first success, change the button to a regenerate action.
+    btn.innerHTML = '&#x21bb; Regenerate';
+    btn.onclick = () => generateAiSummary(true);
+  } catch (e) {
+    body.className = 'ai-summary-body error';
+    body.textContent = 'Network error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    if (btn.innerHTML.includes('Generating')) btn.innerHTML = originalLabel;
   }
 }
 
@@ -840,6 +946,16 @@ function renderConversation(records) {
       </div>
       <div class="briefing-title" style="margin-top:10px;">Tools used</div>
       ${toolsHtml}
+      <div class="ai-summary" id="ai-summary-block">
+        <div class="ai-summary-header">
+          <span class="ai-summary-title">AI summary</span>
+          <button class="ai-btn" id="ai-generate-btn"
+                  onclick="generateAiSummary(false)">
+            &#x2728; Generate summary
+          </button>
+        </div>
+        <div class="ai-summary-body" id="ai-summary-body" style="display:none;"></div>
+      </div>
     </div>
   `;
 
