@@ -147,6 +147,9 @@
   .continuation-banner strong { color: var(--green); }
 
   /* ── Help tooltip on column / card headers ─────────────────────────── */
+  /* Just the icon — the tooltip itself is portaled into <body> with JS so it
+     escapes any ancestor overflow:hidden/auto (which would clip table-card
+     and chart-card tooltips). */
   .help {
     display: inline-flex; align-items: center; justify-content: center;
     width: 13px; height: 13px;
@@ -154,30 +157,25 @@
     border: 1px solid var(--muted); border-radius: 50%;
     color: var(--muted); font-size: 9px; font-weight: 600;
     font-family: inherit; cursor: help;
-    position: relative;
     text-transform: none; letter-spacing: 0;
   }
   .help::after { content: '?'; line-height: 1; }
   .help:hover { color: var(--accent); border-color: var(--accent); }
-  /* The tooltip itself */
-  .help:hover::before {
-    content: attr(data-tip);
-    position: absolute;
-    bottom: calc(100% + 8px); left: 50%;
-    transform: translateX(-50%);
+
+  .help-tooltip {
+    position: fixed;
     background: var(--card); color: var(--text);
     border: 1px solid var(--border); border-radius: 6px;
     padding: 9px 12px;
     font-size: 12px; font-weight: 400;
     text-transform: none; letter-spacing: 0; line-height: 1.45;
     white-space: normal;
-    width: max-content; max-width: 280px;
-    z-index: 100; pointer-events: none;
+    width: max-content; max-width: min(320px, calc(100vw - 24px));
+    z-index: 2000; pointer-events: none;
     box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    opacity: 0; transition: opacity 80ms ease-out;
   }
-  /* Edge-aware variants for right-most columns so tooltip doesn't clip */
-  .help.help-right:hover::before { left: auto; right: 0; transform: none; }
-  .help.help-left:hover::before  { left: 0; transform: none; }
+  .help-tooltip.show { opacity: 1; }
 
   /* ── Searchable user combobox ──────────────────────────────────────── */
   .user-combobox {
@@ -459,6 +457,10 @@ async function init() {
   setupUserCombobox();
   syncUserComboboxInput();
 
+  // Portaled help tooltips with edge-aware positioning (handles dynamic
+  // .help icons added by every renderStats / renderConversationFirstPage).
+  setupHelpTooltips();
+
   // Start auto-refresh AFTER first successful load.
   startPolling();
   // Pause polling when the tab is hidden — no point wasting bandwidth or
@@ -566,6 +568,104 @@ function updateLastSeenLabel() {
   else if (s < 60)     el.textContent = s + 's ago';
   else if (s < 3600)   el.textContent = Math.floor(s / 60) + 'm ago';
   else                 el.textContent = Math.floor(s / 3600) + 'h ago';
+}
+
+// ── IST timestamp formatting ───────────────────────────────────────────────
+// Server sends timestamps as UTC ISO strings. The dashboard renders them in
+// Asia/Kolkata (UTC+5:30) so the team sees their local time. Tooltips include
+// the IST tag so it's never ambiguous.
+function formatIST(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;   // server already sent a non-ISO string
+  // en-IN gives DD/MM/YYYY which is what most Indian users expect; we also
+  // pin to 24h and Asia/Kolkata. Trim the comma between date and time for
+  // a tighter look.
+  const s = d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    year:   'numeric',
+    month:  '2-digit',
+    day:    '2-digit',
+    hour:   '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return s.replace(',', '') + ' IST';
+}
+
+// Shorter variant for tight table cells (no year).
+function formatISTShort(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).replace(',', '');
+}
+
+// ── Help tooltips (JS portal, edge-aware) ──────────────────────────────────
+let helpTooltipEl = null;
+
+function showHelpTooltip(iconEl) {
+  hideHelpTooltip();
+  const text = iconEl.dataset.tip || iconEl.getAttribute('title');
+  if (!text) return;
+
+  // Build the tooltip in document.body so no ancestor overflow clips it.
+  helpTooltipEl = document.createElement('div');
+  helpTooltipEl.className = 'help-tooltip';
+  helpTooltipEl.textContent = text;
+  document.body.appendChild(helpTooltipEl);
+
+  // Measure, then position. Place above by default; flip below if too close
+  // to the top of the viewport. Clamp horizontally so it never goes off-screen.
+  const iconRect = iconEl.getBoundingClientRect();
+  const tipRect  = helpTooltipEl.getBoundingClientRect();
+  const MARGIN   = 8;
+  const ARROW_GAP = 8;
+
+  let left = iconRect.left + iconRect.width / 2 - tipRect.width / 2;
+  let top  = iconRect.top - tipRect.height - ARROW_GAP;
+
+  // Horizontal clamp
+  if (left < MARGIN) left = MARGIN;
+  if (left + tipRect.width > window.innerWidth - MARGIN) {
+    left = window.innerWidth - tipRect.width - MARGIN;
+  }
+  // Vertical flip if it would land off the top of the viewport
+  if (top < MARGIN) {
+    top = iconRect.bottom + ARROW_GAP;
+  }
+
+  helpTooltipEl.style.left = left + 'px';
+  helpTooltipEl.style.top  = top  + 'px';
+  // Force a frame so the opacity transition runs
+  requestAnimationFrame(() => helpTooltipEl && helpTooltipEl.classList.add('show'));
+}
+
+function hideHelpTooltip() {
+  if (helpTooltipEl) {
+    helpTooltipEl.remove();
+    helpTooltipEl = null;
+  }
+}
+
+function setupHelpTooltips() {
+  // Single delegated listener — catches dynamically-added .help icons too
+  // (e.g. the ones renderStats() builds on every refresh).
+  document.addEventListener('mouseover', (e) => {
+    const icon = e.target && e.target.closest && e.target.closest('.help');
+    if (icon) showHelpTooltip(icon);
+  });
+  document.addEventListener('mouseout', (e) => {
+    const icon = e.target && e.target.closest && e.target.closest('.help');
+    if (icon) hideHelpTooltip();
+  });
+  // Hide on scroll / resize so a stale tooltip doesn't drift off its anchor.
+  document.addEventListener('scroll', hideHelpTooltip, true);
+  window.addEventListener('resize', hideHelpTooltip);
 }
 
 // ── User combobox behaviour ────────────────────────────────────────────────
@@ -993,7 +1093,7 @@ function renderSessionsTable(rows) {
       <td class="muted">${esc(s.machine_label)}</td>
       <td class="muted num">${esc(s.session_id)}</td>
       <td>${esc(s.project)}</td>
-      <td class="muted">${esc(s.last)}</td>
+      <td class="muted" title="${esc(formatIST(s.last_timestamp))}">${esc(formatISTShort(s.last_timestamp) || s.last)}</td>
       <td><span class="model-tag">${esc(s.model)}</span></td>
       <td class="num">${s.turns}</td>
       <td class="num">${fmt(s.input)}</td>
@@ -1272,7 +1372,7 @@ function renderMessageBubble(r) {
   const role = r.type === 'user' ? 'User' : 'Assistant';
   const text = extractText((r.message || {}).content);
   return `<div class="msg-bubble msg-${r.type}">
-    <div class="role">${role}${r.timestamp ? ' · ' + esc(r.timestamp) : ''}</div>
+    <div class="role">${role}${r.timestamp ? ' · ' + esc(formatIST(r.timestamp)) : ''}</div>
     <pre>${esc(text || '(empty)')}</pre>
   </div>`;
 }

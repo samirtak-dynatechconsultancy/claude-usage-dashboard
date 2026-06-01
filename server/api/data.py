@@ -150,7 +150,12 @@ class handler(BaseHTTPRequestHandler):
                 "machine_label":  mc.get("hostname") or "",
                 "project":        s.get("project_name") or "unknown",
                 "branch":         s.get("git_branch") or "",
-                "last":           (s.get("last_timestamp") or "")[:16].replace("T", " "),
+                # Raw ISO timestamps; the client formats in Asia/Kolkata for
+                # display. "last" stays for backward compat with older clients
+                # but new builds use last_timestamp directly.
+                "last":             (s.get("last_timestamp") or "")[:16].replace("T", " "),
+                "last_timestamp":   s.get("last_timestamp"),
+                "first_timestamp":  s.get("first_timestamp"),
                 "last_date":      (s.get("last_timestamp") or "")[:10],
                 "model":          s.get("model") or "unknown",
                 "turns":          s.get("turn_count") or 0,
