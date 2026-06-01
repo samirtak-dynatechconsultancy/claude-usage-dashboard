@@ -146,6 +146,56 @@
   }
   .continuation-banner strong { color: var(--green); }
 
+  /* ── Searchable user combobox ──────────────────────────────────────── */
+  .user-combobox {
+    position: relative; display: inline-block; min-width: 240px;
+  }
+  .user-combobox input {
+    width: 100%; padding-right: 26px;   /* room for the clear button */
+  }
+  .combobox-clear {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    background: transparent; border: none; color: var(--muted);
+    font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px;
+  }
+  .combobox-clear:hover { color: var(--text); }
+  .combobox-results {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 6px; max-height: 360px; overflow-y: auto;
+    z-index: 30; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  .combobox-row {
+    padding: 7px 11px; cursor: pointer;
+    border-bottom: 1px solid var(--border);
+  }
+  .combobox-row:last-child { border-bottom: none; }
+  .combobox-row:hover,
+  .combobox-row.combobox-active { background: rgba(255,255,255,0.04); }
+  .combobox-row .row-main {
+    font-size: 13px; color: var(--text);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .combobox-row .row-meta {
+    color: var(--muted); font-size: 11px; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .combobox-row .row-pill {
+    margin-left: auto; font-size: 10px; color: var(--muted);
+    font-family: monospace;
+  }
+  .combobox-row.combobox-all { background: rgba(217,119,87,0.06); }
+  .combobox-empty {
+    padding: 12px; text-align: center; color: var(--muted); font-size: 12px;
+  }
+  .activity-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .activity-active { background: var(--green); }     /* < 24h */
+  .activity-recent { background: var(--accent); }    /* < 7d  */
+  .activity-stale  { background: var(--muted); opacity: 0.6; }  /* older */
+
   /* AI summary block inside the briefing card */
   .ai-summary {
     margin-top: 12px; padding-top: 12px;
@@ -221,9 +271,14 @@
 
 <div id="filter-bar">
   <div class="filter-label">User</div>
-  <select id="user-filter" onchange="onUserChange()">
-    <option value="">All users</option>
-  </select>
+  <div class="user-combobox" id="user-combobox">
+    <input id="user-search" class="filter-input"
+           placeholder="All users — type to search…"
+           autocomplete="off" spellcheck="false" />
+    <button id="user-clear" class="combobox-clear" title="Clear filter"
+            onclick="selectUser('', '')" hidden>×</button>
+    <div id="user-results" class="combobox-results" hidden></div>
+  </div>
   <div class="filter-sep"></div>
   <div class="filter-label">Model</div>
   <select id="model-filter" onchange="onModelChange()" multiple size="1" style="min-width: 180px;">
@@ -355,6 +410,10 @@ async function init() {
   document.getElementById('status').style.display = 'none';
   document.getElementById('app').style.display = '';
 
+  // Initialise the searchable user combobox now that rawData is populated.
+  setupUserCombobox();
+  syncUserComboboxInput();
+
   // Start auto-refresh AFTER first successful load.
   startPolling();
   // Pause polling when the tab is hidden — no point wasting bandwidth or
@@ -397,21 +456,17 @@ async function loadData(isPoll = false) {
 
     // Preserve current filter selections before rebuilding dropdowns,
     // otherwise auto-refresh would wipe whatever the user picked.
-    const userSelEl = document.getElementById('user-filter');
-    const prevUser  = userSelEl.value;
     const msSelEl   = document.getElementById('model-filter');
     const prevModels = new Set(
       Array.from(msSelEl.selectedOptions).map(o => o.value).filter(Boolean)
     );
 
-    // ── Rebuild user dropdown (new users may have started using Claude) ──
-    userSelEl.innerHTML = '<option value="">All users</option>';
-    for (const u of rawData.users) {
-      const opt = document.createElement('option');
-      opt.value = u.id;
-      opt.textContent = u.label + (u.email ? ' (' + u.email + ')' : '');
-      if (u.id === prevUser) opt.selected = true;
-      userSelEl.appendChild(opt);
+    // ── User combobox: refresh in place ──────────────────────────────────
+    // The selected user (selectedUser) is the source of truth — the input
+    // text reflects it. If the dropdown is open we re-render visible rows.
+    syncUserComboboxInput();
+    if (!document.getElementById('user-results').hidden) {
+      renderUserResults(document.getElementById('user-search').value);
     }
 
     // ── Rebuild model dropdown (new models may have appeared) ────────────
@@ -468,9 +523,172 @@ function updateLastSeenLabel() {
   else                 el.textContent = Math.floor(s / 3600) + 'h ago';
 }
 
-async function onUserChange() {
-  selectedUser = document.getElementById('user-filter').value;
-  await loadData();
+// ── User combobox behaviour ────────────────────────────────────────────────
+let comboboxActiveIdx     = -1;     // -1 = the "All users" row, 0+ = filtered users
+let comboboxFilteredUsers = [];
+
+function timeAgo(iso) {
+  if (!iso) return 'never';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms))          return 'unknown';
+  if (ms < 60_000)        return 'just now';
+  if (ms < 3_600_000)     return Math.floor(ms / 60_000)     + 'm ago';
+  if (ms < 86_400_000)    return Math.floor(ms / 3_600_000)  + 'h ago';
+  if (ms < 604_800_000)   return Math.floor(ms / 86_400_000) + 'd ago';
+  if (ms < 2_592_000_000) return Math.floor(ms / 604_800_000) + 'w ago';
+  return Math.floor(ms / 2_592_000_000) + 'mo ago';
+}
+
+function activityClass(iso) {
+  if (!iso) return 'activity-stale';
+  const ms = Date.now() - new Date(iso).getTime();
+  if (isNaN(ms))       return 'activity-stale';
+  if (ms < 86_400_000) return 'activity-active';  // <24h
+  if (ms < 604_800_000) return 'activity-recent'; // <7d
+  return 'activity-stale';
+}
+
+function syncUserComboboxInput() {
+  // Reflect the current `selectedUser` in the input + clear button.
+  const input = document.getElementById('user-search');
+  const clear = document.getElementById('user-clear');
+  if (!input || !rawData) return;
+  if (selectedUser) {
+    const u = rawData.users.find(x => x.id === selectedUser);
+    input.value = u ? u.label : '';
+    input.placeholder = '';
+    clear.hidden = false;
+  } else {
+    input.value = '';
+    input.placeholder = 'All users — type to search…';
+    clear.hidden = true;
+  }
+}
+
+function renderUserResults(query) {
+  if (!rawData) return;
+  const results = document.getElementById('user-results');
+  const q = (query || '').toLowerCase().trim();
+
+  // Sort by activity (most recently active first), then alphabetical
+  const sorted = [...rawData.users].sort((a, b) => {
+    const at = a.last_seen || '';
+    const bt = b.last_seen || '';
+    if (at !== bt) return bt.localeCompare(at);
+    return (a.label || '').localeCompare(b.label || '');
+  });
+
+  comboboxFilteredUsers = q
+    ? sorted.filter(u =>
+        (u.label || '').toLowerCase().includes(q) ||
+        (u.email || '').toLowerCase().includes(q) ||
+        (u.os_username || '').toLowerCase().includes(q))
+    : sorted;
+  comboboxActiveIdx = -1;
+
+  const rows = comboboxFilteredUsers.map((u, i) => `
+    <div class="combobox-row" data-idx="${i}"
+         onmouseenter="comboboxActiveIdx=${i};updateComboActive(true);"
+         onclick="selectUser('${esc(u.id)}', '${esc(u.label)}')">
+      <div class="row-main">
+        <span class="activity-dot ${activityClass(u.last_seen)}"
+              title="Last seen ${esc(timeAgo(u.last_seen))}"></span>
+        <span>${esc(u.label)}</span>
+        <span class="row-pill">${esc(timeAgo(u.last_seen))}</span>
+      </div>
+      <div class="row-meta">${esc(u.email || u.os_username || '')}</div>
+    </div>
+  `).join('');
+
+  results.innerHTML = `
+    <div class="combobox-row combobox-all" data-idx="-1"
+         onclick="selectUser('', '')">
+      <div class="row-main"><strong>All users</strong></div>
+      <div class="row-meta">${rawData.users.length} total · all activity</div>
+    </div>
+    ${rows || '<div class="combobox-empty">No users match "' + esc(query) + '"</div>'}
+  `;
+}
+
+function updateComboActive(scroll) {
+  document.querySelectorAll('#user-results .combobox-row').forEach(el => {
+    el.classList.toggle('combobox-active',
+      parseInt(el.dataset.idx) === comboboxActiveIdx);
+  });
+  if (scroll) {
+    const active = document.querySelector('#user-results .combobox-row.combobox-active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+function selectUser(id, label) {
+  selectedUser = id;
+  const input = document.getElementById('user-search');
+  if (id) {
+    input.value = label;
+    document.getElementById('user-clear').hidden = false;
+  } else {
+    input.value = '';
+    input.placeholder = 'All users — type to search…';
+    document.getElementById('user-clear').hidden = true;
+  }
+  document.getElementById('user-results').hidden = true;
+  input.blur();
+  loadData();
+}
+
+function setupUserCombobox() {
+  const input   = document.getElementById('user-search');
+  const results = document.getElementById('user-results');
+  const cb      = document.getElementById('user-combobox');
+
+  input.addEventListener('focus', () => {
+    // Show the dropdown; if a user is selected, treating the input as a
+    // search means the user is about to switch — clear text but remember
+    // the current selection so Escape can restore it.
+    if (selectedUser) input.value = '';
+    renderUserResults('');
+    results.hidden = false;
+  });
+
+  input.addEventListener('input', () => {
+    renderUserResults(input.value);
+    results.hidden = false;
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      results.hidden = true;
+      syncUserComboboxInput();
+      input.blur();
+      return;
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      comboboxActiveIdx = Math.min(comboboxFilteredUsers.length - 1, comboboxActiveIdx + 1);
+      updateComboActive(true);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      comboboxActiveIdx = Math.max(-1, comboboxActiveIdx - 1);
+      updateComboActive(true);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (comboboxActiveIdx === -1) {
+        selectUser('', '');
+      } else {
+        const u = comboboxFilteredUsers[comboboxActiveIdx];
+        if (u) selectUser(u.id, u.label);
+      }
+    }
+  });
+
+  // Click outside collapses
+  document.addEventListener('click', (e) => {
+    if (!cb.contains(e.target)) {
+      results.hidden = true;
+      syncUserComboboxInput();
+    }
+  });
 }
 
 function onModelChange() {
