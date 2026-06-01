@@ -101,7 +101,30 @@
            padding: 24px; width: min(900px, 95vw); height: min(80vh, 800px);
            display: flex; flex-direction: column; }
   .modal h2 { font-size: 14px; color: var(--accent); margin-bottom: 4px; }
-  .modal .meta-row { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .modal .meta-row { color: var(--muted); font-size: 12px; margin-bottom: 16px; line-height: 1.5; }
+  .modal .meta-row code {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+    padding: 1px 5px; font-size: 11px;
+  }
+
+  /* Narrow modal for forms (Invite) */
+  .modal-narrow { width: min(440px, 95vw); height: auto; }
+  .modal-narrow label {
+    display: block; color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;
+  }
+  .invite-actions {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px;
+  }
+  #invite-result {
+    margin-top: 12px; padding: 10px 12px;
+    border-radius: 5px; font-size: 12px; line-height: 1.5;
+    display: none;
+  }
+  #invite-result.show { display: block; }
+  #invite-result.ok    { background: rgba(74,222,128,0.08); color: var(--green); border: 1px solid rgba(74,222,128,0.3); }
+  #invite-result.warn  { background: rgba(251,191,36,0.08); color: #fbbf24;       border: 1px solid rgba(251,191,36,0.3); }
+  #invite-result.error { background: rgba(248,113,113,0.08); color: var(--error); border: 1px solid rgba(248,113,113,0.3); }
   .modal .close { background: transparent; border: none; color: var(--muted);
                   font-size: 22px; cursor: pointer; float: right; line-height: 1; }
   .modal .close:hover { color: var(--text); }
@@ -350,6 +373,11 @@
             title="Refresh now (auto-refreshes every 30 seconds)">
       &#x21bb; <span id="last-updated">syncing…</span>
     </button>
+    <button class="signout-btn admin-only" id="invite-btn"
+            onclick="openInviteModal()" hidden
+            title="Invite a teammate to view the dashboard">
+      + Invite
+    </button>
     <span id="viewer-email" class="muted"></span>
     <button class="signout-btn" onclick="signOut()">Sign out</button>
   </div>
@@ -458,12 +486,45 @@
   </div>
 </div>
 
+<!-- Invite modal (admin only) -->
+<div class="modal-backdrop" id="invite-backdrop" onclick="closeInviteOnBackdrop(event)">
+  <div class="modal modal-narrow">
+    <button class="close" onclick="closeInviteModal()">&times;</button>
+    <h2>Invite a dashboard viewer</h2>
+    <div class="meta-row">
+      They'll get a magic-link sign-in email. Clicking the link signs them in
+      automatically — no password required. The email is added to the
+      <code>dashboard_users</code> allowlist immediately.
+    </div>
+    <form id="invite-form" onsubmit="submitInvite(event)">
+      <label for="invite-email">Email</label>
+      <input type="email" id="invite-email" class="filter-input"
+             placeholder="teammate@company.com" required autocomplete="off"
+             style="width:100%; padding:8px 10px;">
+
+      <label for="invite-role" style="margin-top:12px;">Role</label>
+      <select id="invite-role" class="filter-input"
+              style="width:100%; padding:8px 10px;">
+        <option value="viewer">Viewer — can see the dashboard</option>
+        <option value="admin">Admin — can also invite other people</option>
+      </select>
+
+      <div class="invite-actions">
+        <button type="button" class="signout-btn" onclick="closeInviteModal()">Cancel</button>
+        <button type="submit" class="ai-btn" id="invite-submit">Send invite</button>
+      </div>
+      <div id="invite-result"></div>
+    </form>
+  </div>
+</div>
+
 <script>
 // ─── Globals ────────────────────────────────────────────────────────────────
 // Local var renamed from `supabase` to `sb` to avoid colliding with the
 // global `window.supabase` exposed by @supabase/supabase-js@2's UMD bundle.
 let sb = null;
 let session = null;
+let viewerRole = 'viewer';   // 'viewer' | 'admin' — set from /api/auth-check
 let rawData = null;
 let selectedRange = '30d';
 let selectedUser = '';
@@ -504,6 +565,11 @@ async function init() {
   }
   const me = await check.json();
   document.getElementById('viewer-email').textContent = me.email;
+  viewerRole = me.role || 'viewer';
+  // Show admin-only controls (Invite button, etc.)
+  if (viewerRole === 'admin') {
+    document.querySelectorAll('.admin-only').forEach(el => el.hidden = false);
+  }
 
   // Wire up range buttons (data is fetched after the first wire).
   document.querySelectorAll('.range-btn').forEach(btn => {
@@ -1518,8 +1584,75 @@ function closeModal() {
 function closeModalOnBackdrop(e) {
   if (e.target.id === 'modal-backdrop') closeModal();
 }
+
+// ─── Invite modal ──────────────────────────────────────────────────────────
+function openInviteModal() {
+  document.getElementById('invite-email').value = '';
+  document.getElementById('invite-role').value  = 'viewer';
+  const result = document.getElementById('invite-result');
+  result.className = '';
+  result.textContent = '';
+  document.getElementById('invite-backdrop').classList.add('show');
+  setTimeout(() => document.getElementById('invite-email').focus(), 50);
+}
+
+function closeInviteModal() {
+  document.getElementById('invite-backdrop').classList.remove('show');
+}
+
+function closeInviteOnBackdrop(e) {
+  if (e.target.id === 'invite-backdrop') closeInviteModal();
+}
+
+async function submitInvite(e) {
+  e.preventDefault();
+  const email = document.getElementById('invite-email').value.trim().toLowerCase();
+  const role  = document.getElementById('invite-role').value;
+  const btn    = document.getElementById('invite-submit');
+  const result = document.getElementById('invite-result');
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Sending…';
+  result.className = '';
+  result.textContent = '';
+
+  try {
+    const res = await fetch('/api/invite', {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, role }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      result.className = 'show error';
+      result.textContent = data.error || ('HTTP ' + res.status);
+      return;
+    }
+    if (data.email_sent) {
+      result.className = 'show ok';
+      result.textContent = '✓ ' + email + ' was added to the allowlist and a magic-link sign-in email is on its way.';
+    } else {
+      result.className = 'show warn';
+      result.textContent =
+        '⚠ ' + email + ' was added to the allowlist, but the email failed to send. ' +
+        'They can still be invited via Supabase Auth manually. (' + (data.email_warning || 'no reason given') + ')';
+    }
+    document.getElementById('invite-email').value = '';
+  } catch (err) {
+    result.className = 'show error';
+    result.textContent = 'Network error: ' + err.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') {
+    closeModal();
+    closeInviteModal();
+  }
 });
 
 init();
