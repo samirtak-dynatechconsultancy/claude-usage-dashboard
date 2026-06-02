@@ -55,6 +55,28 @@ from lib.supabase_client import service_client
 
 MODEL_PRIORITY = {"opus": 3, "sonnet": 2, "haiku": 1}
 
+
+def _strip_nulls(value):
+    """Recursively strip U+0000 from every string in a parsed JSON structure.
+
+    Postgres TEXT and JSONB columns both reject \\x00 with error 22P05
+    ('unsupported Unicode escape sequence' / 'untranslatable character').
+    Claude Code's JSONL sometimes contains null bytes -- typically when a
+    Bash tool captures binary file content, or when a Read tool result
+    includes a control char from a binary file. Stripping them lets the
+    row land cleanly; the lossy substitution is preferable to dropping
+    the entire push.
+    """
+    if isinstance(value, str):
+        if "\x00" not in value:
+            return value
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {k: _strip_nulls(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_nulls(item) for item in value]
+    return value
+
 # tool_result content can be unbounded (shell output, file contents). Truncate
 # at this size so a single rogue command output doesn't bloat the messages row.
 TOOL_RESULT_MAX_CHARS = 8000
@@ -132,6 +154,12 @@ class handler(BaseHTTPRequestHandler):
         body, err = read_json(self, max_bytes=5 * 1024 * 1024)  # bumped from 4 MB
         if err:
             return write_json(self, err[0], err[1])
+
+        # Strip null bytes from every string in the parsed payload before any
+        # DB call. Postgres rejects U+0000 in TEXT and JSONB columns; a
+        # rogue null in a single tool_result content would otherwise tank
+        # the entire batch with 22P05. See _strip_nulls() docstring.
+        body = _strip_nulls(body)
 
         user_in     = body.get("user")     or {}
         machine_in  = body.get("machine")  or {}
