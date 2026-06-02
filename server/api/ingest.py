@@ -171,8 +171,12 @@ class handler(BaseHTTPRequestHandler):
         user_id = user_row.data[0]["id"]
 
         # ── 2. Upsert machine ───────────────────────────────────────────────
-        # Schema 0006: machines no longer has user_id (one box hosts many).
+        # Schema 0006 (revised): machines.user_id stays. The UNIQUE constraint
+        # is now composite -- (machine_fp, user_id) -- so the same physical
+        # RDP host can have N rows (one per user). on_conflict matches the
+        # composite key.
         machine_payload = {
+            "user_id":    user_id,
             "hostname":   hostname,
             "os":         machine_in.get("os"),
             "machine_fp": machine_fp,
@@ -182,7 +186,7 @@ class handler(BaseHTTPRequestHandler):
             machine_payload["is_rdp_host"] = True
         machine_row = (
             sb.table("machines")
-            .upsert(machine_payload, on_conflict="machine_fp")
+            .upsert(machine_payload, on_conflict="machine_fp,user_id")
             .execute()
         )
         machine_id = machine_row.data[0]["id"]

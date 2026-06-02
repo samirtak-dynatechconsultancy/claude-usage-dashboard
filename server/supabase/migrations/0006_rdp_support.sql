@@ -7,14 +7,50 @@
 -- Idempotent — safe to re-run.
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- ── 1. machines: drop the per-machine "owner" coupling ────────────────────
--- Previously the machines table had a NOT NULL user_id FK, which meant one
--- box = one user. An RDP host hosts many users, so the relationship has to
--- live in sessions (which already links user + machine) instead.
-ALTER TABLE machines DROP CONSTRAINT IF EXISTS machines_user_id_fkey;
-ALTER TABLE machines DROP COLUMN IF EXISTS user_id;
+-- ── 1. machines: same box, one row per user ──────────────────────────────
+-- Keep the user_id FK so the user<->machine relationship stays explicit
+-- (one user can have many machines; one machine row belongs to one user).
+-- For RDP hosts where many users share one physical box, the same
+-- machine_fp now appears across multiple rows (one per user_id) -- the
+-- UNIQUE constraint moves from (machine_fp) to (machine_fp, user_id).
+--
+-- Idempotent: handles three states cleanly --
+--   a) Fresh schema:        user_id present, single-col UNIQUE
+--   b) Old build of 0006:   user_id dropped, single-col UNIQUE on machine_fp
+--   c) Already-on-target:   user_id present, composite UNIQUE
+-- Re-running this migration converges all three to (c).
 
--- machine_fp stays UNIQUE — same box still has exactly one row.
+-- Restore user_id if a previous build of 0006 dropped it.
+ALTER TABLE machines ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE;
+
+-- Back-fill user_id for any rows that are still NULL (would only happen
+-- if state (b) had pushes between the drop and now). Use the user_id of
+-- the earliest session on this machine as the "owning" user.
+UPDATE machines m
+SET user_id = COALESCE(m.user_id, (
+    SELECT s.user_id FROM sessions s
+    WHERE s.machine_id = m.id
+    ORDER BY s.first_timestamp NULLS LAST
+    LIMIT 1
+))
+WHERE m.user_id IS NULL;
+
+-- After back-fill (or in state (a)/(c)), user_id is NOT NULL.
+ALTER TABLE machines ALTER COLUMN user_id SET NOT NULL;
+
+-- Replace the single-column UNIQUE(machine_fp) with composite
+-- UNIQUE(machine_fp, user_id) so multiple users can share one machine_fp.
+ALTER TABLE machines DROP CONSTRAINT IF EXISTS machines_machine_fp_key;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'machines_machine_fp_user_id_key'
+  ) THEN
+    ALTER TABLE machines
+      ADD CONSTRAINT machines_machine_fp_user_id_key UNIQUE (machine_fp, user_id);
+  END IF;
+END $$;
 
 -- ── 2. users: mark RDP-client pseudo-users ────────────────────────────────
 -- When a collector running on an RDP host can't get a real OS username, it
