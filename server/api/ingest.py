@@ -154,14 +154,53 @@ class handler(BaseHTTPRequestHandler):
         rdp_session_id   = (machine_in.get("rdp_session_id") or machine_in.get("session_id") or "").strip() or None
 
         sb = service_client()
+
+        # ── RDP auto-link ───────────────────────────────────────────────────
+        # When an RDP push arrives carrying client_machine="DSPL-LPT-551",
+        # look up whether that hostname is already registered in machines
+        # (which would mean the teammate installed the collector on their
+        # physical laptop too). If so, reuse that machine's user_id so the
+        # RDP push gets attributed to the real human instead of creating a
+        # "DSPL-LPT-551" pseudo-user.
+        #
+        # Falls back to the os_username from the payload (the CLIENTNAME
+        # itself) when no laptop registration exists -- which is exactly
+        # the current behavior, so non-laptop-installed teammates keep
+        # working. Admins can still rename them via the Manage Users
+        # modal as a manual override (Path A).
+        rdp_autolinked = False
+        if is_rdp and client_machine:
+            try:
+                hostname_match = (
+                    sb.table("machines").select("user_id")
+                    .eq("hostname", client_machine).limit(1).execute()
+                )
+                if hostname_match.data:
+                    mapped_uid = hostname_match.data[0]["user_id"]
+                    mapped_user = (
+                        sb.table("users").select("os_username")
+                        .eq("id", mapped_uid).limit(1).execute()
+                    )
+                    if mapped_user.data and mapped_user.data[0].get("os_username"):
+                        os_username = mapped_user.data[0]["os_username"]
+                        rdp_autolinked = True
+            except Exception:
+                # Lookup failure shouldn't fail the whole push; fall back to
+                # the payload's os_username (which is the raw CLIENTNAME).
+                pass
+
         # See AGENTS.md — "now()" as a JSON literal fails Postgres parsing;
         # build the ISO timestamp here and reuse across the batch.
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # ── 1. Upsert user ──────────────────────────────────────────────────
-        # is_rdp is sticky-true once seen (we never flip it back to false).
+        # is_rdp is sticky-true once seen, BUT we only set it for genuinely
+        # RDP-pseudo identities (CLIENTNAME-as-username). When auto-link
+        # resolved a real human (their laptop registered them), don't
+        # demote them to "RDP user" just because this particular push
+        # came from an RDP host.
         user_payload = {"os_username": os_username, "last_seen": now_iso}
-        if is_rdp:
+        if is_rdp and not rdp_autolinked:
             user_payload["is_rdp"] = True
         user_row = (
             sb.table("users")
@@ -355,6 +394,8 @@ class handler(BaseHTTPRequestHandler):
             "ok": True,
             "user_id": user_id,
             "machine_id": machine_id,
+            "rdp_autolinked": rdp_autolinked,
+            "resolved_user": os_username,
             "sessions_seen":    len(sessions_in),
             "turns_received":   len(turns_in),
             "messages_received": len(records_in),
