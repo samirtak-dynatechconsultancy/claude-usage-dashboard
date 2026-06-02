@@ -107,6 +107,42 @@
     padding: 1px 5px; font-size: 11px;
   }
 
+  /* Wide modal for tables (Manage users) */
+  .modal-wide { width: min(960px, 95vw); height: min(80vh, 800px); }
+  .manage-filter { margin-bottom: 12px; }
+  .manage-table { width: 100%; border-collapse: collapse; }
+  .manage-table th {
+    text-align: left; padding: 8px 10px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted);
+    border-bottom: 1px solid var(--border); position: sticky; top: 0;
+    background: var(--card);
+  }
+  .manage-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .manage-table tr:hover td { background: rgba(255,255,255,0.02); }
+  .manage-table input.edit {
+    width: 100%; background: var(--bg); border: 1px solid transparent;
+    color: var(--text); padding: 4px 6px; border-radius: 3px;
+    font-family: inherit; font-size: 13px;
+  }
+  .manage-table input.edit:hover  { border-color: var(--border); }
+  .manage-table input.edit:focus  { outline: none; border-color: var(--accent); background: var(--bg); }
+  .manage-table input.edit.dirty  { border-color: var(--accent); background: rgba(217,119,87,0.06); }
+  .manage-table input.edit.saving { opacity: 0.6; }
+  .manage-table input.edit.saved  { border-color: var(--green); }
+  .manage-table .rdp-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: rgba(167,139,250,0.15); color: #a78bfa;
+    font-size: 10px; font-family: monospace; margin-left: 6px;
+  }
+  .manage-table .activity-cell {
+    display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  }
+  .manage-table .client-cell {
+    color: var(--muted); font-family: monospace; font-size: 11px;
+  }
+  .manage-table tr.hidden { display: none; }
+  #manage-content .muted { color: var(--muted); }
+
   /* Narrow modal for forms (Invite) */
   .modal-narrow { width: min(440px, 95vw); height: auto; }
   .modal-narrow label {
@@ -373,6 +409,11 @@
             title="Refresh now (auto-refreshes every 30 seconds)">
       &#x21bb; <span id="last-updated">syncing…</span>
     </button>
+    <button class="signout-btn admin-only" id="manage-users-btn"
+            onclick="openManageUsers()" hidden
+            title="Manage users — fill in names + emails, see who's active">
+      Users
+    </button>
     <button class="signout-btn admin-only" id="invite-btn"
             onclick="openInviteModal()" hidden
             title="Invite a teammate to view the dashboard">
@@ -483,6 +524,26 @@
     <h2 id="modal-title">Conversation</h2>
     <div class="meta-row" id="modal-meta"></div>
     <div class="modal-content" id="modal-content">Loading…</div>
+  </div>
+</div>
+
+<!-- Manage users modal (admin only) -->
+<div class="modal-backdrop" id="manage-backdrop" onclick="closeManageOnBackdrop(event)">
+  <div class="modal modal-wide">
+    <button class="close" onclick="closeManageUsers()">&times;</button>
+    <h2>Manage users</h2>
+    <div class="meta-row">
+      Every teammate the dashboard has seen. Edit display name and email
+      inline; press Tab or click ✓ to save. RDP users are auto-detected and
+      marked with a 🖥 badge.
+    </div>
+    <div class="manage-filter">
+      <input type="text" id="manage-search" placeholder="Search by name, email, or username…"
+             class="filter-input" oninput="filterManageRows()" autocomplete="off">
+    </div>
+    <div class="modal-content" id="manage-content">
+      <div class="muted" style="text-align:center;padding:30px;">Loading…</div>
+    </div>
   </div>
 </div>
 
@@ -1585,6 +1646,135 @@ function closeModalOnBackdrop(e) {
   if (e.target.id === 'modal-backdrop') closeModal();
 }
 
+// ─── Manage users modal (admin) ────────────────────────────────────────────
+let manageRowsCache = [];
+
+async function openManageUsers() {
+  document.getElementById('manage-content').innerHTML =
+    '<div class="muted" style="text-align:center;padding:30px;">Loading…</div>';
+  document.getElementById('manage-search').value = '';
+  document.getElementById('manage-backdrop').classList.add('show');
+
+  try {
+    const res = await fetch('/api/users-admin', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('manage-content').innerHTML =
+        '<div class="muted" style="text-align:center;padding:30px;color:var(--error);">'
+        + esc(data.error || ('HTTP ' + res.status))
+        + '</div>';
+      return;
+    }
+    manageRowsCache = data.users || [];
+    renderManageRows(manageRowsCache);
+  } catch (e) {
+    document.getElementById('manage-content').innerHTML =
+      '<div class="muted" style="color:var(--error);padding:30px;">Network error: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderManageRows(rows) {
+  const activityLabel = a => ({active:'Active', recent:'Recent', idle:'Idle', stale:'Stale'}[a] || a);
+  const tbody = rows.map(u => {
+    const rdpBadge   = u.is_rdp ? '<span class="rdp-badge">🖥 RDP</span>' : '';
+    const clientHtml = u.last_client_machine
+      ? `<span class="client-cell">via ${esc(u.last_client_machine)}</span>` : '';
+    return `
+    <tr data-id="${esc(u.id)}" data-osu="${esc(u.os_username || '')}" data-em="${esc(u.email || '')}" data-dn="${esc(u.display_name || '')}">
+      <td class="activity-cell">
+        <span class="activity-dot ${activityClass(u.last_seen)}"
+              title="Last seen ${esc(timeAgo(u.last_seen))} — ${esc(activityLabel(u.activity))}"></span>
+        ${esc(timeAgo(u.last_seen))}
+      </td>
+      <td>
+        <span style="font-family:monospace;">${esc(u.os_username)}</span>${rdpBadge}
+        <div>${clientHtml}</div>
+      </td>
+      <td>
+        <input class="edit" data-field="display_name" value="${esc(u.display_name || '')}"
+               placeholder="(no name)"
+               oninput="markDirty(this)" onblur="saveField(this, '${esc(u.id)}')"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}else if(event.key==='Escape'){this.value=this.dataset.original||'';this.classList.remove('dirty');}">
+      </td>
+      <td>
+        <input class="edit" data-field="email" value="${esc(u.email || '')}"
+               type="email" placeholder="(no email)"
+               oninput="markDirty(this)" onblur="saveField(this, '${esc(u.id)}')"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}else if(event.key==='Escape'){this.value=this.dataset.original||'';this.classList.remove('dirty');}">
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('manage-content').innerHTML = `
+    <table class="manage-table">
+      <thead><tr>
+        <th>Activity</th>
+        <th>Username</th>
+        <th>Display name</th>
+        <th>Email</th>
+      </tr></thead>
+      <tbody>${tbody || '<tr><td colspan="4" class="muted" style="text-align:center;padding:30px;">No users yet — wait for the first push.</td></tr>'}</tbody>
+    </table>
+  `;
+  // Cache the original values so Esc can restore them
+  document.querySelectorAll('#manage-content input.edit').forEach(el => {
+    el.dataset.original = el.value;
+  });
+}
+
+function markDirty(el) {
+  if (el.value !== (el.dataset.original || '')) el.classList.add('dirty');
+  else                                          el.classList.remove('dirty');
+  el.classList.remove('saved', 'saving');
+}
+
+async function saveField(el, userId) {
+  const field = el.dataset.field;
+  const value = el.value.trim();
+  if (value === (el.dataset.original || '')) return;   // no change
+
+  el.classList.remove('dirty', 'saved');
+  el.classList.add('saving');
+  try {
+    const res = await fetch('/api/users-admin?id=' + encodeURIComponent(userId), {
+      method: 'PATCH',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      // Revert + flag
+      el.value = el.dataset.original || '';
+      el.classList.remove('saving', 'dirty');
+      alert('Save failed: ' + (data.error || ('HTTP ' + res.status)));
+      return;
+    }
+    el.classList.remove('saving');
+    el.classList.add('saved');
+    el.dataset.original = value;
+    setTimeout(() => el.classList.remove('saved'), 1200);
+  } catch (e) {
+    el.value = el.dataset.original || '';
+    el.classList.remove('saving', 'dirty');
+    alert('Network error: ' + e.message);
+  }
+}
+
+function filterManageRows() {
+  const q = document.getElementById('manage-search').value.toLowerCase().trim();
+  document.querySelectorAll('#manage-content tbody tr').forEach(tr => {
+    const hay = (tr.dataset.osu + ' ' + tr.dataset.em + ' ' + tr.dataset.dn).toLowerCase();
+    tr.classList.toggle('hidden', q !== '' && !hay.includes(q));
+  });
+}
+
+function closeManageUsers() {
+  document.getElementById('manage-backdrop').classList.remove('show');
+}
+function closeManageOnBackdrop(e) {
+  if (e.target.id === 'manage-backdrop') closeManageUsers();
+}
+
 // ─── Invite modal ──────────────────────────────────────────────────────────
 function openInviteModal() {
   document.getElementById('invite-email').value = '';
@@ -1652,6 +1842,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeModal();
     closeInviteModal();
+    closeManageUsers();
   }
 });
 

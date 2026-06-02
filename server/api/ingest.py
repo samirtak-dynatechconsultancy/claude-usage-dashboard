@@ -148,35 +148,41 @@ class handler(BaseHTTPRequestHandler):
                 "error": "user.os_username, machine.hostname, machine.machine_fp are required"
             })
 
+        # RDP / shared-OS-user fields (all optional, default to non-RDP)
+        is_rdp           = bool(machine_in.get("is_rdp"))
+        client_machine   = (machine_in.get("client_machine") or "").strip() or None
+        rdp_session_id   = (machine_in.get("rdp_session_id") or machine_in.get("session_id") or "").strip() or None
+
         sb = service_client()
         # See AGENTS.md — "now()" as a JSON literal fails Postgres parsing;
         # build the ISO timestamp here and reuse across the batch.
         now_iso = datetime.now(timezone.utc).isoformat()
 
         # ── 1. Upsert user ──────────────────────────────────────────────────
+        # is_rdp is sticky-true once seen (we never flip it back to false).
+        user_payload = {"os_username": os_username, "last_seen": now_iso}
+        if is_rdp:
+            user_payload["is_rdp"] = True
         user_row = (
             sb.table("users")
-            .upsert(
-                {"os_username": os_username, "last_seen": now_iso},
-                on_conflict="os_username",
-            )
+            .upsert(user_payload, on_conflict="os_username")
             .execute()
         )
         user_id = user_row.data[0]["id"]
 
         # ── 2. Upsert machine ───────────────────────────────────────────────
+        # Schema 0006: machines no longer has user_id (one box hosts many).
+        machine_payload = {
+            "hostname":   hostname,
+            "os":         machine_in.get("os"),
+            "machine_fp": machine_fp,
+            "last_seen":  now_iso,
+        }
+        if is_rdp:
+            machine_payload["is_rdp_host"] = True
         machine_row = (
             sb.table("machines")
-            .upsert(
-                {
-                    "user_id":    user_id,
-                    "hostname":   hostname,
-                    "os":         machine_in.get("os"),
-                    "machine_fp": machine_fp,
-                    "last_seen":  now_iso,
-                },
-                on_conflict="machine_fp",
-            )
+            .upsert(machine_payload, on_conflict="machine_fp")
             .execute()
         )
         machine_id = machine_row.data[0]["id"]
@@ -197,6 +203,11 @@ class handler(BaseHTTPRequestHandler):
                     "first_timestamp": s.get("first_timestamp"),
                     "last_timestamp":  s.get("last_timestamp"),
                     "model":           s.get("model"),
+                    # Tag every session with the source-device info if the
+                    # collector reported any. Lets the UI show "via RDP from
+                    # LAPTOP-ALICE" per row.
+                    "client_machine":  client_machine,
+                    "rdp_session_id":  rdp_session_id,
                     "updated_at":      now_iso,
                 })
             if rows:
