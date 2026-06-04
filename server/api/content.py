@@ -113,6 +113,34 @@ def _compute_briefing(sb, session_id):
         txt = (cont_resp.data[0].get("text_content") or "").lstrip()
         cont = txt.startswith(CONTINUATION_MARKER)
 
+    # Per-model token breakdown for the session — gives the user a quick
+    # sense of which models were used and how many tokens each consumed.
+    turns_resp = (
+        sb.table("turns")
+        .select("model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens")
+        .eq("session_id", session_id)
+        .execute()
+    )
+    models_agg = {}  # model → {turns, input, output, cache_read, cache_creation}
+    for t in (turns_resp.data or []):
+        m = t.get("model") or "unknown"
+        agg = models_agg.setdefault(m, {
+            "model": m, "turns": 0,
+            "input_tokens": 0, "output_tokens": 0,
+            "cache_read_tokens": 0, "cache_creation_tokens": 0,
+        })
+        agg["turns"] += 1
+        agg["input_tokens"]          += t.get("input_tokens") or 0
+        agg["output_tokens"]         += t.get("output_tokens") or 0
+        agg["cache_read_tokens"]     += t.get("cache_read_tokens") or 0
+        agg["cache_creation_tokens"] += t.get("cache_creation_tokens") or 0
+
+    # Sort by total tokens desc (most-used model first).
+    models_summary = sorted(
+        models_agg.values(),
+        key=lambda x: -(x["input_tokens"] + x["output_tokens"]),
+    )
+
     return {
         "total_messages":        total,
         "first_timestamp":       first_ts,
@@ -120,6 +148,7 @@ def _compute_briefing(sb, session_id):
         "duration_min":          duration_min,
         "tools_used":            tools_used,
         "continuation_detected": cont,
+        "models_summary":        models_summary,
     }
 
 
@@ -164,27 +193,57 @@ class handler(BaseHTTPRequestHandler):
             )
             total = cnt.count or 0
 
-        # Fetch this page of messages.
+        # Fetch this page of messages (include turn_id for model lookup).
         msgs = (
             sb.table("messages")
             .select("role, timestamp, text_content, content_blocks, "
-                    "tool_uses, tool_results, message_uuid")
+                    "tool_uses, tool_results, message_uuid, turn_id")
             .eq("session_id", sid)
             .order("timestamp")
             .range(offset, offset + limit - 1)
             .execute()
         )
 
+        # Batch-fetch turn data for this page's messages so we can attach
+        # model + token counts to each assistant bubble.
+        turn_ids = list({
+            m["turn_id"] for m in (msgs.data or [])
+            if m.get("turn_id")
+        })
+        turns_by_id = {}
+        if turn_ids:
+            # PostgREST `in_` on UUIDs; chunk for safety.
+            for i in range(0, len(turn_ids), 200):
+                chunk = turn_ids[i:i + 200]
+                tres = (
+                    sb.table("turns")
+                    .select("id, model, input_tokens, output_tokens, "
+                            "cache_read_tokens, cache_creation_tokens")
+                    .in_("id", chunk)
+                    .execute()
+                )
+                for t in (tres.data or []):
+                    turns_by_id[t["id"]] = t
+
         records = []
         for m in (msgs.data or []):
-            records.append({
+            rec = {
                 "type":      m["role"],
                 "timestamp": m["timestamp"],
                 "message": {
                     "id":      m.get("message_uuid"),
                     "content": m.get("content_blocks") or [],
                 },
-            })
+            }
+            # Attach model + token metadata from the linked turn row.
+            turn = turns_by_id.get(m.get("turn_id"))
+            if turn:
+                rec["model"]                 = turn.get("model")
+                rec["input_tokens"]          = turn.get("input_tokens") or 0
+                rec["output_tokens"]         = turn.get("output_tokens") or 0
+                rec["cache_read_tokens"]     = turn.get("cache_read_tokens") or 0
+                rec["cache_creation_tokens"] = turn.get("cache_creation_tokens") or 0
+            records.append(rec)
 
         return write_json(self, 200, {
             "records":  records,

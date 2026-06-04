@@ -1437,6 +1437,7 @@ function renderConversationFirstPage(body) {
   const dur   = briefing.duration_min   || 0;
   const tools = briefing.tools_used     || [];
   const cont  = briefing.continuation_detected;
+  const models = briefing.models_summary || [];
 
   const toolsHtml = tools.length
     ? `<div class="tools-row">${tools.map(t =>
@@ -1444,6 +1445,34 @@ function renderConversationFirstPage(body) {
     : '<div class="muted" style="font-size:11px;">No tools used in this session.</div>';
 
   const totalCalls = tools.reduce((a, t) => a + t.count, 0);
+
+  // Per-model token breakdown table for this session.
+  const modelsHtml = models.length
+    ? `<table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:6px;">
+        <thead><tr style="color:var(--muted);text-align:left;">
+          <th style="padding:4px 8px;">Model</th>
+          <th style="padding:4px 8px;">Turns</th>
+          <th style="padding:4px 8px;">Input</th>
+          <th style="padding:4px 8px;">Output</th>
+          <th style="padding:4px 8px;">Cache Read</th>
+          <th style="padding:4px 8px;">Cache Write</th>
+          <th style="padding:4px 8px;">Est. Cost</th>
+        </tr></thead>
+        <tbody>${models.map(m => {
+          const cost = calcCost(m.model, m.input_tokens, m.output_tokens,
+                                m.cache_read_tokens, m.cache_creation_tokens);
+          return `<tr>
+            <td style="padding:4px 8px;"><span class="model-tag">${esc(m.model)}</span></td>
+            <td style="padding:4px 8px;" class="num">${m.turns.toLocaleString()}</td>
+            <td style="padding:4px 8px;" class="num">${m.input_tokens.toLocaleString()}</td>
+            <td style="padding:4px 8px;" class="num">${m.output_tokens.toLocaleString()}</td>
+            <td style="padding:4px 8px;" class="num">${m.cache_read_tokens.toLocaleString()}</td>
+            <td style="padding:4px 8px;" class="num">${m.cache_creation_tokens.toLocaleString()}</td>
+            <td style="padding:4px 8px;" class="cost">$${cost.toFixed(2)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`
+    : '<div class="muted" style="font-size:11px;">No turn data available.</div>';
 
   const bannerHtml = cont
     ? `<div class="continuation-banner">
@@ -1464,6 +1493,8 @@ function renderConversationFirstPage(body) {
         <span>·</span>
         <span><strong>${totalCalls}</strong> total tool calls</span>
       </div>
+      <div class="briefing-title" style="margin-top:10px;">Token usage by model<span class="help help-left" data-tip="Per-model breakdown of tokens consumed in this session. Each turn is priced at its own model's rate."></span></div>
+      ${modelsHtml}
       <div class="briefing-title" style="margin-top:10px;">Tools used<span class="help help-left" data-tip="Every tool Claude invoked in this session (Bash, Read, Edit, etc.) with how many times each was called."></span></div>
       ${toolsHtml}
       <div class="ai-summary" id="ai-summary-block">
@@ -1626,8 +1657,26 @@ function renderMessageBubble(r) {
   if (r.type !== 'user' && r.type !== 'assistant') return '';
   const role = r.type === 'user' ? 'User' : 'Assistant';
   const text = extractText((r.message || {}).content);
+
+  // For assistant messages, show model tag + token counts if available.
+  let metaHtml = '';
+  if (r.type === 'assistant' && r.model) {
+    const inp = r.input_tokens  || 0;
+    const out = r.output_tokens || 0;
+    const cr  = r.cache_read_tokens     || 0;
+    const cc  = r.cache_creation_tokens || 0;
+    const cost = calcCost(r.model, inp, out, cr, cc);
+    metaHtml = ` <span class="model-tag">${esc(r.model)}</span>`
+      + `<span class="muted" style="font-size:10px; margin-left:6px;">`
+      + `in: ${inp.toLocaleString()} · out: ${out.toLocaleString()}`
+      + (cr ? ` · cache-read: ${cr.toLocaleString()}` : '')
+      + (cc ? ` · cache-write: ${cc.toLocaleString()}` : '')
+      + ` · $${cost.toFixed(4)}`
+      + `</span>`;
+  }
+
   return `<div class="msg-bubble msg-${r.type}">
-    <div class="role">${role}${r.timestamp ? ' · ' + esc(formatIST(r.timestamp)) : ''}</div>
+    <div class="role">${role}${r.timestamp ? ' · ' + esc(formatIST(r.timestamp)) : ''}${metaHtml}</div>
     <pre>${esc(text || '(empty)')}</pre>
   </div>`;
 }
