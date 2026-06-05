@@ -229,6 +229,7 @@ class handler(BaseHTTPRequestHandler):
                 "user_label":     user_label,
                 "contributors":   contrib_labels,
                 "machine_label":  mc.get("hostname") or "",
+                "is_rdp":         bool(mc.get("is_rdp_host")),
                 "project":        s.get("project_name") or "unknown",
                 "branch":         s.get("git_branch") or "",
                 # Raw ISO timestamps; the client formats in Asia/Kolkata for

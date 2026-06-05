@@ -51,6 +51,16 @@
   .range-btn:last-child { border-right: none; }
   .range-btn:hover { background: rgba(255,255,255,0.04); color: var(--text); }
   .range-btn.active { background: rgba(217,119,87,0.15); color: var(--accent); font-weight: 600; }
+  .source-btn { background: none; border: 1px solid var(--border); color: var(--muted);
+               padding: 4px 10px; font-size: 12px; cursor: pointer; border-right: none; }
+  .source-btn:first-child { border-radius: 4px 0 0 4px; }
+  .source-btn:last-child { border-radius: 0 4px 4px 0; border-right: 1px solid var(--border); }
+  .source-btn:hover { background: rgba(255,255,255,0.04); color: var(--text); }
+  .source-btn.active { background: rgba(217,119,87,0.15); color: var(--accent); font-weight: 600; }
+  .source-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
+                font-weight: 600; margin-left: 4px; vertical-align: middle; }
+  .source-tag.local { background: rgba(74,222,128,0.15); color: #4ade80; }
+  .source-tag.rdp { background: rgba(167,139,250,0.15); color: #a78bfa; }
 
   .container { max-width: 1400px; margin: 0 auto; padding: 24px; position: relative; }
   .loading-overlay {
@@ -476,6 +486,13 @@
     </div>
   </div>
   <div class="filter-sep"></div>
+  <div class="filter-label">Source</div>
+  <div class="range-group">
+    <button class="source-btn active" data-source="all" onclick="selectSource('all')">All</button>
+    <button class="source-btn" data-source="local" onclick="selectSource('local')">Local</button>
+    <button class="source-btn" data-source="rdp" onclick="selectSource('rdp')">RDP</button>
+  </div>
+  <div class="filter-sep"></div>
   <div class="filter-label">Range</div>
   <div class="range-group">
     <button class="range-btn" data-range="today">Today</button>
@@ -662,6 +679,7 @@ let rawData = null;
 let selectedRange = '30d';
 let selectedUser = '';
 let selectedMachine = '';
+let selectedSource = 'all';  // 'all' | 'local' | 'rdp'
 let selectedModels = null;  // null = all
 const charts = {};
 
@@ -1032,6 +1050,14 @@ function selectMachine(id) {
   loadData({showLoading: true});
 }
 
+// ─── Source filter (All / Local / RDP) ─────────────────────────────────────
+function selectSource(src) {
+  selectedSource = src;
+  document.querySelectorAll('.source-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.source === src));
+  applyFilter();
+}
+
 function syncMachineDropdown() {
   const sel = document.getElementById('machine-select');
   if (!sel || !rawData) return;
@@ -1279,8 +1305,14 @@ function applyFilter() {
     calcCost(a.model, a.input, a.output, a.cache_read, a.cache_creation));
 
   // Sessions
+  const wantSource = s =>
+    selectedSource === 'all' ||
+    (selectedSource === 'rdp' && s.is_rdp) ||
+    (selectedSource === 'local' && !s.is_rdp);
+
   const filteredSessions = rawData.sessions.filter(s =>
     wantModel(s.model) &&
+    wantSource(s) &&
     (!start || s.last_date >= start) &&
     (!end || s.last_date <= end)
   );
@@ -1540,9 +1572,12 @@ function renderSessionsTable(rows) {
     const multiTag = contribs.length > 1
       ? ` <span class="muted" style="font-size:10px;" title="${esc(contribs.join(', '))}">(+${contribs.length - 1} more)</span>`
       : '';
+    const srcTag = s.is_rdp
+      ? '<span class="source-tag rdp">RDP</span>'
+      : '<span class="source-tag local">Local</span>';
     return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
       <td>${esc(s.user_label)}${multiTag}</td>
-      <td class="muted">${esc(s.machine_label)}</td>
+      <td class="muted">${esc(s.machine_label)}${srcTag}</td>
       <td class="muted num">${esc(s.session_id)}</td>
       <td>${esc(s.project)}</td>
       <td class="muted" title="${esc(formatIST(s.last_timestamp))}">${esc(formatISTShort(s.last_timestamp) || s.last)}</td>
