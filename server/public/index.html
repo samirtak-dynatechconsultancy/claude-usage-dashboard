@@ -435,6 +435,11 @@
     <div id="user-results" class="combobox-results" hidden></div>
   </div>
   <div class="filter-sep"></div>
+  <div class="filter-label">Machine</div>
+  <select id="machine-select" class="filter-input" style="width:180px;" onchange="selectMachine(this.value)">
+    <option value="">All machines</option>
+  </select>
+  <div class="filter-sep"></div>
   <div class="filter-label">Model</div>
   <div class="multiselect" id="model-multiselect">
     <button type="button" class="multiselect-trigger" id="model-trigger"
@@ -589,6 +594,7 @@ let viewerRole = 'viewer';   // 'viewer' | 'admin' — set from /api/auth-check
 let rawData = null;
 let selectedRange = '30d';
 let selectedUser = '';
+let selectedMachine = '';
 let selectedModels = null;  // null = all
 const charts = {};
 
@@ -682,7 +688,10 @@ async function loadData(isPoll = false) {
   loadInProgress = true;
 
   try {
-    const qs = selectedUser ? '?user_id=' + encodeURIComponent(selectedUser) : '';
+    const params = [];
+    if (selectedUser)    params.push('user_id='    + encodeURIComponent(selectedUser));
+    if (selectedMachine) params.push('machine_id=' + encodeURIComponent(selectedMachine));
+    const qs = params.length ? '?' + params.join('&') : '';
     const res = await fetch('/api/data' + qs, { headers: authHeaders() });
     if (!res.ok) {
       // Hard-fail the first load (user needs to know auth is broken). Stay
@@ -699,6 +708,9 @@ async function loadData(isPoll = false) {
     if (!document.getElementById('user-results').hidden) {
       renderUserResults(document.getElementById('user-search').value);
     }
+
+    // ── Machine dropdown: refresh in place ─────────────────────────────
+    syncMachineDropdown();
 
     // ── Model multi-select: refresh menu + label in place ────────────────
     // selectedModels is the source of truth (Set or null=all). The new model
@@ -955,6 +967,29 @@ function selectUser(id, label) {
   document.getElementById('user-results').hidden = true;
   input.blur();
   loadData();
+}
+
+// ─── Machine filter ────────────────────────────────────────────────────────
+function selectMachine(id) {
+  selectedMachine = id;
+  loadData();
+}
+
+function syncMachineDropdown() {
+  const sel = document.getElementById('machine-select');
+  if (!sel || !rawData) return;
+  const machines = rawData.machines || [];
+  // Preserve current selection if still valid.
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">All machines</option>'
+    + machines.map(m =>
+      `<option value="${esc(m.id)}">${esc(m.hostname)}${m.is_rdp_host ? ' (RDP)' : ''}</option>`
+    ).join('');
+  if (prev && machines.some(m => String(m.id) === prev)) {
+    sel.value = prev;
+  } else {
+    sel.value = selectedMachine;
+  }
 }
 
 function setupUserCombobox() {

@@ -41,6 +41,7 @@ class handler(BaseHTTPRequestHandler):
 
         qs = parse_qs(urlparse(self.path).query)
         filter_user_id = (qs.get("user_id") or [None])[0]
+        filter_machine_id = (qs.get("machine_id") or [None])[0]
 
         sb = service_client()
 
@@ -48,6 +49,11 @@ class handler(BaseHTTPRequestHandler):
         users = sb.table("users").select(
             "id, os_username, display_name, email, last_seen"
         ).order("os_username").execute().data or []
+
+        # ── machines (for the filter dropdown) ──────────────────────────────
+        machines = sb.table("machines").select(
+            "id, hostname, user_id, is_rdp_host, last_seen"
+        ).order("hostname").execute().data or []
 
         # ── turns query base ────────────────────────────────────────────────
         # We pull all turns (filtered by user if given) and aggregate in
@@ -59,6 +65,8 @@ class handler(BaseHTTPRequestHandler):
         )
         if filter_user_id:
             q = q.eq("user_id", filter_user_id)
+        if filter_machine_id:
+            q = q.eq("machine_id", filter_machine_id)
         # Paginate — supabase-py defaults to 1000 rows. Loop until exhausted.
         all_turns = []
         page = 0
@@ -80,6 +88,8 @@ class handler(BaseHTTPRequestHandler):
         ).order("last_timestamp", desc=True)
         if filter_user_id:
             sq = sq.eq("user_id", filter_user_id)
+        if filter_machine_id:
+            sq = sq.eq("machine_id", filter_machine_id)
         all_sessions = []
         page = 0
         while True:
@@ -135,7 +145,6 @@ class handler(BaseHTTPRequestHandler):
         # ── sessions list for the table ─────────────────────────────────────
         # Build a quick lookup of user/machine display strings.
         users_by_id = {u["id"]: u for u in users}
-        machines = sb.table("machines").select("id, hostname").execute().data or []
         machines_by_id = {m["id"]: m for m in machines}
 
         sessions_all = []
@@ -174,6 +183,12 @@ class handler(BaseHTTPRequestHandler):
                 "email": u.get("email"),
                 "last_seen": u.get("last_seen"),
             } for u in users],
+            "machines": [{
+                "id": m["id"],
+                "hostname": m.get("hostname") or "",
+                "is_rdp_host": bool(m.get("is_rdp_host")),
+                "last_seen": m.get("last_seen"),
+            } for m in machines],
             "all_models":      all_models,
             "daily_by_model":  daily_by_model,
             "hourly_by_model": hourly_by_model,
