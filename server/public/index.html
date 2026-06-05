@@ -51,7 +51,21 @@
   .range-btn:hover { background: rgba(255,255,255,0.04); color: var(--text); }
   .range-btn.active { background: rgba(217,119,87,0.15); color: var(--accent); font-weight: 600; }
 
-  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; position: relative; }
+  .loading-overlay {
+    display: none; position: absolute; inset: 0; z-index: 50;
+    background: rgba(17,17,24,0.7); backdrop-filter: blur(2px);
+    flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 8px;
+  }
+  .loading-overlay.show { display: flex; }
+  .loading-spinner {
+    width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.15);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { color: var(--muted); font-size: 12px; margin-top: 10px; }
   .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
                gap: 16px; margin-bottom: 24px; }
   .stat-card { background: var(--card); border: 1px solid var(--border);
@@ -471,7 +485,11 @@
   </div>
 </div>
 
-<div class="container">
+<div class="container" id="main-container">
+  <div class="loading-overlay" id="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">Loading…</div>
+  </div>
   <div class="stats-row" id="stats-row"></div>
 
   <div class="charts-grid">
@@ -730,10 +748,13 @@ function authHeaders() {
 }
 
 async function loadData(isPoll = false) {
-  // Skip if a previous fetch is still in flight — prevents request pileup
-  // on slow links or if the user spam-clicks the refresh button.
   if (loadInProgress) return;
   loadInProgress = true;
+
+  // Show loading overlay for user-triggered fetches (filter change, manual
+  // refresh), but not for silent background polls — those shouldn't flash.
+  const overlay = document.getElementById('loading-overlay');
+  if (!isPoll && overlay) overlay.classList.add('show');
 
   try {
     const params = [];
@@ -775,6 +796,7 @@ async function loadData(isPoll = false) {
     // we're falling behind ("3m ago", "5m ago", ...).
   } finally {
     loadInProgress = false;
+    if (overlay) overlay.classList.remove('show');
   }
 }
 
