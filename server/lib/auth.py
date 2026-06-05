@@ -5,17 +5,33 @@
      (os_username, hostname); the threat model assumes installer distribution
      is controlled.
 
-  2. Dashboard viewer — Supabase Auth JWT in the Authorization header. The
-     dashboard signs in via Supabase, gets a JWT, and sends it on every
-     /api/data call. We verify the JWT against Supabase, then check the email
+  2. Dashboard viewer — JWT in the Authorization header, signed with
+     JWT_SECRET env var. The login endpoint (/api/login) validates email +
+     password against dashboard_users, then issues a JWT. Every /api/data
+     call sends this JWT; we verify the signature and check the email
      against the dashboard_users allowlist.
 """
 
 import os
 import hmac
+import hashlib
+import time
 from typing import Optional, Tuple
 
-from .supabase_client import service_client, anon_client
+import jwt  # PyJWT
+
+from .supabase_client import service_client
+
+
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRY_S = 86400 * 7   # 7 days
+
+
+def _jwt_secret() -> str:
+    secret = os.environ.get("JWT_SECRET", "")
+    if not secret:
+        raise RuntimeError("Missing JWT_SECRET environment variable.")
+    return secret
 
 
 # ── Collector ingest token ──────────────────────────────────────────────────
@@ -26,6 +42,25 @@ def verify_ingest_token(header_value: Optional[str]) -> bool:
     if not expected or not header_value:
         return False
     return hmac.compare_digest(expected.encode(), header_value.encode())
+
+
+# ── JWT issuance (called by /api/login) ─────────────────────────────────────
+
+def hash_password(password: str) -> str:
+    """SHA-256 hash for password storage. Simple but adequate for a
+    team-internal tool behind an allowlist."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def issue_jwt(email: str, role: str) -> str:
+    """Create a signed JWT for a dashboard user."""
+    payload = {
+        "email": email,
+        "role":  role,
+        "iat":   int(time.time()),
+        "exp":   int(time.time()) + JWT_EXPIRY_S,
+    }
+    return jwt.encode(payload, _jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
 # ── Dashboard viewer auth ───────────────────────────────────────────────────
@@ -42,22 +77,19 @@ def verify_dashboard_user(authorization_header: Optional[str]) -> Tuple[bool, Op
     if not token:
         return False, None, None
 
-    # Verify the JWT against Supabase Auth. gotrue's get_user(token) does this
-    # without a round-trip to Auth servers (it validates locally against the
-    # project's JWT secret embedded in the anon key's payload).
+    # Decode and verify the JWT signature + expiry.
     try:
-        result = anon_client().auth.get_user(token)
-        user = getattr(result, "user", None) or (result.get("user") if isinstance(result, dict) else None)
-        if user is None:
-            return False, None, None
-        email = getattr(user, "email", None) or (user.get("email") if isinstance(user, dict) else None)
-    except Exception:
+        payload = jwt.decode(token, _jwt_secret(), algorithms=[JWT_ALGORITHM])
+        email = payload.get("email")
+    except jwt.ExpiredSignatureError:
+        return False, None, None
+    except jwt.InvalidTokenError:
         return False, None, None
 
     if not email:
         return False, None, None
 
-    # Allowlist check — uses service client to bypass RLS on dashboard_users.
+    # Allowlist check against dashboard_users table.
     row = (
         service_client()
         .table("dashboard_users")
