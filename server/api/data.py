@@ -41,7 +41,7 @@ class handler(BaseHTTPRequestHandler):
 
         qs = parse_qs(urlparse(self.path).query)
         filter_user_id = (qs.get("user_id") or [None])[0]
-        filter_machine_id = (qs.get("machine_id") or [None])[0]
+        filter_hostname = (qs.get("hostname") or [None])[0]
 
         sb = service_client()
 
@@ -53,9 +53,29 @@ class handler(BaseHTTPRequestHandler):
         ).order("os_username").execute().data or []
 
         # ── machines (for the filter dropdown) ──────────────────────────────
-        machines = sb.table("machines").select(
+        all_machines_raw = sb.table("machines").select(
             "id, hostname, user_id, is_rdp_host, last_seen"
         ).order("hostname").execute().data or []
+
+        # Build hostname → [machine_ids] map for hostname-based filtering.
+        machine_ids_by_hostname = {}
+        for m in all_machines_raw:
+            machine_ids_by_hostname.setdefault(m["hostname"], []).append(m["id"])
+
+        # Resolve hostname filter to the set of machine_ids it covers.
+        filter_machine_ids = None
+        if filter_hostname:
+            filter_machine_ids = set(machine_ids_by_hostname.get(filter_hostname, []))
+
+        # Deduplicated machines list for the dropdown (one per hostname).
+        machines_deduped = []
+        seen_hostnames = set()
+        for m in all_machines_raw:
+            if m["hostname"] in seen_hostnames:
+                continue
+            seen_hostnames.add(m["hostname"])
+            machines_deduped.append(m)
+        machines = all_machines_raw
 
         # ── turns query base ────────────────────────────────────────────────
         # We pull all turns (filtered by user if given) and aggregate in
@@ -67,8 +87,8 @@ class handler(BaseHTTPRequestHandler):
         )
         if filter_user_id:
             q = q.eq("user_id", filter_user_id)
-        if filter_machine_id:
-            q = q.eq("machine_id", filter_machine_id)
+        if filter_machine_ids:
+            q = q.in_("machine_id", list(filter_machine_ids))
         # Paginate — supabase-py defaults to 1000 rows. Loop until exhausted.
         all_turns = []
         page = 0
@@ -90,8 +110,8 @@ class handler(BaseHTTPRequestHandler):
         ).order("last_timestamp", desc=True)
         if filter_user_id:
             sq = sq.eq("user_id", filter_user_id)
-        if filter_machine_id:
-            sq = sq.eq("machine_id", filter_machine_id)
+        if filter_machine_ids:
+            sq = sq.in_("machine_id", list(filter_machine_ids))
         all_sessions = []
         page = 0
         while True:
@@ -236,11 +256,10 @@ class handler(BaseHTTPRequestHandler):
                 "last_seen": u.get("last_seen"),
             } for u in users],
             "machines": [{
-                "id": m["id"],
                 "hostname": m.get("hostname") or "",
                 "is_rdp_host": bool(m.get("is_rdp_host")),
                 "last_seen": m.get("last_seen"),
-            } for m in machines],
+            } for m in machines_deduped],
             "all_models":      all_models,
             "daily_by_model":  daily_by_model,
             "daily_by_user":   [

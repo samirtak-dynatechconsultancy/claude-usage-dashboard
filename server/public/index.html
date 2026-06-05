@@ -737,8 +737,8 @@ async function loadData(isPoll = false) {
 
   try {
     const params = [];
-    if (selectedUser)    params.push('user_id='    + encodeURIComponent(selectedUser));
-    if (selectedMachine) params.push('machine_id=' + encodeURIComponent(selectedMachine));
+    if (selectedUser)    params.push('user_id='  + encodeURIComponent(selectedUser));
+    if (selectedMachine) params.push('hostname=' + encodeURIComponent(selectedMachine));
     const qs = params.length ? '?' + params.join('&') : '';
     const res = await fetch('/api/data' + qs, { headers: authHeaders() });
     if (!res.ok) {
@@ -1027,13 +1027,12 @@ function syncMachineDropdown() {
   const sel = document.getElementById('machine-select');
   if (!sel || !rawData) return;
   const machines = rawData.machines || [];
-  // Preserve current selection if still valid.
   const prev = sel.value;
   sel.innerHTML = '<option value="">All machines</option>'
     + machines.map(m =>
-      `<option value="${esc(m.id)}">${esc(m.hostname)}${m.is_rdp_host ? ' (RDP)' : ''}</option>`
+      `<option value="${esc(m.hostname)}">${esc(m.hostname)}${m.is_rdp_host ? ' (RDP)' : ''}</option>`
     ).join('');
-  if (prev && machines.some(m => String(m.id) === prev)) {
+  if (prev && machines.some(m => m.hostname === prev)) {
     sel.value = prev;
   } else {
     sel.value = selectedMachine;
