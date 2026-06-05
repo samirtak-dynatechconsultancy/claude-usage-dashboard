@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sign in - Claude Code Usage Dashboard</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
     --bg: #0f1117;
@@ -30,17 +29,18 @@
   h1 { color: var(--accent); font-size: 20px; margin-bottom: 6px; }
   p.sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; line-height: 1.5; }
   label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase;
-          letter-spacing: 0.05em; margin-bottom: 6px; }
-  input[type="email"] {
+          letter-spacing: 0.05em; margin-bottom: 6px; margin-top: 14px; }
+  label:first-of-type { margin-top: 0; }
+  input {
     width: 100%; background: var(--bg); border: 1px solid var(--border);
     color: var(--text); padding: 10px 12px; border-radius: 6px;
     font-size: 14px; font-family: inherit;
   }
-  input[type="email"]:focus { outline: none; border-color: var(--accent); }
+  input:focus { outline: none; border-color: var(--accent); }
   button {
     width: 100%; background: var(--accent); color: white; border: none;
     padding: 11px; border-radius: 6px; font-size: 14px; font-weight: 600;
-    cursor: pointer; margin-top: 16px;
+    cursor: pointer; margin-top: 20px;
   }
   button:hover { filter: brightness(1.1); }
   button:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -52,46 +52,30 @@
 <body>
 <div class="card">
   <h1>Sign in</h1>
-  <p class="sub">Claude Code Usage Dashboard. Restricted to allowlisted team members — we'll email you a one-time login link.</p>
+  <p class="sub">Claude Code Usage Dashboard. Restricted to allowlisted team members.</p>
   <form id="login-form">
     <label for="email">Email</label>
     <input type="email" id="email" placeholder="you@company.com" required autocomplete="email" autofocus>
-    <button type="submit" id="submit-btn">Send magic link</button>
+    <label for="password">Password</label>
+    <input type="password" id="password" placeholder="Password" required autocomplete="current-password">
+    <button type="submit" id="submit-btn">Sign in</button>
   </form>
   <div id="msg"></div>
 </div>
 
 <script>
-// Local var renamed from `supabase` to `sb` to avoid colliding with the
-// global `window.supabase` exposed by @supabase/supabase-js@2's UMD bundle.
-let sb = null;
-
-async function init() {
-  // Pull public client config from the server.
-  const res = await fetch('/api/config');
-  if (!res.ok) {
-    setMsg('Failed to load config from /api/config. Is SUPABASE_URL set on the server?', 'error');
-    return;
+(async function() {
+  const token = localStorage.getItem('dashboard_token');
+  if (token) {
+    try {
+      const res = await fetch('/api/auth-check', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (res.ok) { window.location.replace('/'); return; }
+    } catch (e) {}
+    localStorage.removeItem('dashboard_token');
   }
-  const cfg = await res.json();
-  sb = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-
-  // If we already have a valid session, skip the form.
-  const { data: { session } } = await sb.auth.getSession();
-  if (session) {
-    window.location.replace('/');
-    return;
-  }
-
-  // Magic-link callback: Supabase returns the user via #access_token=... on the
-  // URL fragment. detectSessionInUrl is on by default, so the SDK handles it.
-  // After it settles, re-check the session.
-  sb.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_IN' && session) {
-      window.location.replace('/');
-    }
-  });
-}
+})();
 
 function setMsg(text, kind) {
   const el = document.getElementById('msg');
@@ -101,30 +85,35 @@ function setMsg(text, kind) {
 
 document.getElementById('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (!sb) { setMsg('Still initializing - try again in a moment.', 'error'); return; }
   const btn = document.getElementById('submit-btn');
   const email = document.getElementById('email').value.trim();
-  if (!email) return;
+  const password = document.getElementById('password').value;
+  if (!email || !password) return;
 
   btn.disabled = true;
-  setMsg('Sending…');
+  setMsg('Signing in…');
 
-  // emailRedirectTo brings them back to the dashboard root after they click
-  // the link in the email.
-  const { error } = await sb.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin + '/' },
-  });
-
-  if (error) {
-    setMsg('Failed: ' + error.message, 'error');
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setMsg(data.error || ('HTTP ' + res.status), 'error');
+      btn.disabled = false;
+      return;
+    }
+    localStorage.setItem('dashboard_token', data.token);
+    localStorage.setItem('dashboard_email', data.email);
+    localStorage.setItem('dashboard_role', data.role);
+    window.location.replace('/');
+  } catch (err) {
+    setMsg('Network error: ' + err.message, 'error');
     btn.disabled = false;
-  } else {
-    setMsg('Check your inbox — we sent a sign-in link to ' + email + '.', 'success');
   }
 });
-
-init();
 </script>
 </body>
 </html>

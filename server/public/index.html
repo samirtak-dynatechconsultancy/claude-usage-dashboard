@@ -6,7 +6,7 @@
 <title>Claude Code Usage Dashboard</title>
 <!-- Inline empty favicon so the browser stops fetching /favicon.ico and 404ing. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Auth is now server-side JWT — no Supabase JS SDK needed -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -670,10 +670,7 @@
 
 <script>
 // ─── Globals ────────────────────────────────────────────────────────────────
-// Local var renamed from `supabase` to `sb` to avoid colliding with the
-// global `window.supabase` exposed by @supabase/supabase-js@2's UMD bundle.
-let sb = null;
-let session = null;
+let session = null;  // { access_token: "..." }
 let viewerRole = 'viewer';   // 'viewer' | 'admin' — set from /api/auth-check
 let rawData = null;
 let selectedRange = '30d';
@@ -695,18 +692,10 @@ let lastUpdatedAt = null;
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 async function init() {
-  try {
-    const cfg = await (await fetch('/api/config')).json();
-    sb = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
-  } catch (e) {
-    return showStatus('Failed to load /api/config: ' + e.message, true);
-  }
+  const token = localStorage.getItem('dashboard_token');
+  if (!token) { window.location.replace('/login'); return; }
+  session = { access_token: token };
 
-  const { data } = await sb.auth.getSession();
-  session = data.session;
-  if (!session) { window.location.replace('/login'); return; }
-
-  // Verify with the server that we're on the dashboard_users allowlist.
   const check = await fetch('/api/auth-check', { headers: authHeaders() });
   if (check.status === 403) {
     const body = await check.json();
@@ -1222,7 +1211,9 @@ function showStatus(msg, isError) {
 }
 
 async function signOut() {
-  await sb.auth.signOut();
+  localStorage.removeItem('dashboard_token');
+  localStorage.removeItem('dashboard_email');
+  localStorage.removeItem('dashboard_role');
   window.location.replace('/login');
 }
 
