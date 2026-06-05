@@ -65,36 +65,43 @@ class handler(BaseHTTPRequestHandler):
             .execute()
         ).data or []
 
-        turn_counts = {}
-        tc_resp = sb.rpc("", {}).execute() if False else None
-        # Count turns per machine for activity indication.
-        # Use a raw count query grouped by machine_id.
+        # Group by hostname so the same physical machine (shared by multiple
+        # RDP users) shows as ONE row, not one-per-user.
+        by_hostname = {}
         for m in machines:
-            turn_counts[m["id"]] = 0
-        tc_data = (
-            sb.table("turns")
-            .select("machine_id", count="exact")
-            .execute()
-        )
+            key = m["hostname"]
+            if key not in by_hostname:
+                al = alias_by_hostname.get(key, {})
+                by_hostname[key] = {
+                    "ids":          [m["id"]],
+                    "hostname":     key,
+                    "alias":        al.get("alias") or "",
+                    "alias_notes":  al.get("notes") or "",
+                    "machine_fp":   (m.get("machine_fp") or "")[:12],
+                    "os":           m.get("os") or "",
+                    "is_rdp_host":  bool(m.get("is_rdp_host")),
+                    "user_ids":     [],
+                    "user_labels":  [],
+                    "first_seen":   m.get("first_seen"),
+                    "last_seen":    m.get("last_seen"),
+                }
+            else:
+                by_hostname[key]["ids"].append(m["id"])
+                if m.get("is_rdp_host"):
+                    by_hostname[key]["is_rdp_host"] = True
+                ls = m.get("last_seen")
+                if ls and (not by_hostname[key]["last_seen"]
+                           or ls > by_hostname[key]["last_seen"]):
+                    by_hostname[key]["last_seen"] = ls
 
-        rows = []
-        for m in machines:
             u = users_by_id.get(m["user_id"], {})
-            al = alias_by_hostname.get(m["hostname"], {})
-            rows.append({
-                "id":           m["id"],
-                "hostname":     m["hostname"],
-                "display_name": m.get("display_name") or al.get("alias") or "",
-                "alias":        al.get("alias") or "",
-                "alias_notes":  al.get("notes") or "",
-                "machine_fp":   (m.get("machine_fp") or "")[:12],
-                "os":           m.get("os") or "",
-                "is_rdp_host":  bool(m.get("is_rdp_host")),
-                "user_id":      m["user_id"],
-                "user_label":   u.get("display_name") or u.get("os_username") or "?",
-                "first_seen":   m.get("first_seen"),
-                "last_seen":    m.get("last_seen"),
-            })
+            label = u.get("display_name") or u.get("os_username") or "?"
+            entry = by_hostname[key]
+            if m["user_id"] not in entry["user_ids"]:
+                entry["user_ids"].append(m["user_id"])
+                entry["user_labels"].append(label)
+
+        rows = sorted(by_hostname.values(), key=lambda r: r["hostname"])
 
         write_json(self, 200, {
             "machines": rows,

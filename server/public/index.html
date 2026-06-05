@@ -2061,22 +2061,13 @@ async function openManageMachines() {
 }
 
 function renderMachineRows(machines, mappings, users) {
-  const mappingsByMachine = {};
-  for (const m of mappings) {
-    (mappingsByMachine[m.machine_id] ||= []).push(m);
-  }
-  const usersById = {};
-  for (const u of users) usersById[u.id] = u;
-
+  // machines is already grouped by hostname from the server.
   const tbody = machines.map(m => {
     const rdpBadge = m.is_rdp_host ? '<span class="rdp-badge">🖥 RDP</span>' : '';
-    const mMappings = mappingsByMachine[m.id] || [];
-    const mappingHtml = mMappings.length
-      ? mMappings.map(mp => {
-          const u = usersById[mp.user_id] || {};
-          return `<span style="font-size:11px;">${esc(u.label || '?')} (${esc(mp.role)})</span>`;
-        }).join(', ')
-      : '<span class="muted" style="font-size:11px;">auto: ' + esc(m.user_label) + '</span>';
+    const usersHtml = (m.user_labels || []).map(l =>
+      `<span style="font-size:11px;">${esc(l)}</span>`
+    ).join(', ') || '<span class="muted" style="font-size:11px;">none</span>';
+    const firstId = (m.ids || [])[0] || '';
 
     return `
     <tr>
@@ -2087,11 +2078,11 @@ function renderMachineRows(machines, mappings, users) {
       <td>
         <input class="edit" value="${esc(m.alias || '')}"
                placeholder="(no alias)"
-               data-hostname="${esc(m.hostname)}" data-machine-id="${esc(m.id)}"
+               data-hostname="${esc(m.hostname)}" data-machine-id="${esc(firstId)}"
                onblur="saveMachineAlias(this)"
                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
       </td>
-      <td>${mappingHtml}</td>
+      <td>${usersHtml}</td>
       <td class="muted" style="font-size:11px;">${esc(m.last_seen ? timeAgo(m.last_seen) : 'never')}</td>
     </tr>`;
   }).join('');
