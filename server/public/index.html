@@ -1473,6 +1473,7 @@ function renderConversationFirstPage(body) {
   const tools = briefing.tools_used     || [];
   const cont  = briefing.continuation_detected;
   const models = briefing.models_summary || [];
+  const usersInSession = briefing.users_summary || [];
 
   const toolsHtml = tools.length
     ? `<div class="tools-row">${tools.map(t =>
@@ -1530,6 +1531,22 @@ function renderConversationFirstPage(body) {
       </div>
       <div class="briefing-title" style="margin-top:10px;">Token usage by model<span class="help help-left" data-tip="Per-model breakdown of tokens consumed in this session. Each turn is priced at its own model's rate."></span></div>
       ${modelsHtml}
+      ${usersInSession.length > 1 ? `
+      <div class="briefing-title" style="margin-top:10px;">Contributors<span class="help help-left" data-tip="Multiple users interacted with Claude in this session (common on shared RDP hosts). Each turn is attributed to the user who was connected at the time."></span></div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:6px;">
+        <thead><tr style="color:var(--muted);text-align:left;">
+          <th style="padding:4px 8px;">User</th>
+          <th style="padding:4px 8px;">Turns</th>
+          <th style="padding:4px 8px;">Input</th>
+          <th style="padding:4px 8px;">Output</th>
+        </tr></thead>
+        <tbody>${usersInSession.map(u => `<tr>
+          <td style="padding:4px 8px;"><strong>${esc(u.label)}</strong></td>
+          <td style="padding:4px 8px;" class="num">${u.turns.toLocaleString()}</td>
+          <td style="padding:4px 8px;" class="num">${u.input_tokens.toLocaleString()}</td>
+          <td style="padding:4px 8px;" class="num">${u.output_tokens.toLocaleString()}</td>
+        </tr>`).join('')}</tbody>
+      </table>` : ''}
       <div class="briefing-title" style="margin-top:10px;">Tools used<span class="help help-left" data-tip="Every tool Claude invoked in this session (Bash, Read, Edit, etc.) with how many times each was called."></span></div>
       ${toolsHtml}
       <div class="ai-summary" id="ai-summary-block">
@@ -1690,8 +1707,13 @@ function extractPlainText(msgContent) {
 function renderMessageBubble(r) {
   if (r._error) return `<div class="muted">[file fetch error: ${esc(r._error)}]</div>`;
   if (r.type !== 'user' && r.type !== 'assistant') return '';
-  const role = r.type === 'user' ? 'User' : 'Assistant';
   const text = extractText((r.message || {}).content);
+
+  // Show the user label when the session has multiple contributors.
+  const userTag = r.user_label
+    ? `<strong style="color:var(--blue);">${esc(r.user_label)}</strong> · `
+    : '';
+  const role = r.type === 'user' ? 'User' : 'Assistant';
 
   // For assistant messages, show model tag + token counts if available.
   let metaHtml = '';
@@ -1711,7 +1733,7 @@ function renderMessageBubble(r) {
   }
 
   return `<div class="msg-bubble msg-${r.type}">
-    <div class="role">${role}${r.timestamp ? ' · ' + esc(formatIST(r.timestamp)) : ''}${metaHtml}</div>
+    <div class="role">${userTag}${role}${r.timestamp ? ' · ' + esc(formatIST(r.timestamp)) : ''}${metaHtml}</div>
     <pre>${esc(text || '(empty)')}</pre>
   </div>`;
 }

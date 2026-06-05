@@ -113,15 +113,17 @@ def _compute_briefing(sb, session_id):
         txt = (cont_resp.data[0].get("text_content") or "").lstrip()
         cont = txt.startswith(CONTINUATION_MARKER)
 
-    # Per-model token breakdown for the session — gives the user a quick
-    # sense of which models were used and how many tokens each consumed.
+    # Per-model and per-user token breakdown for the session.
     turns_resp = (
         sb.table("turns")
-        .select("model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens")
+        .select("user_id, model, input_tokens, output_tokens, "
+                "cache_read_tokens, cache_creation_tokens")
         .eq("session_id", session_id)
         .execute()
     )
+
     models_agg = {}  # model → {turns, input, output, cache_read, cache_creation}
+    users_agg = {}   # user_id → {turns, input, output, ...}
     for t in (turns_resp.data or []):
         m = t.get("model") or "unknown"
         agg = models_agg.setdefault(m, {
@@ -135,11 +137,38 @@ def _compute_briefing(sb, session_id):
         agg["cache_read_tokens"]     += t.get("cache_read_tokens") or 0
         agg["cache_creation_tokens"] += t.get("cache_creation_tokens") or 0
 
-    # Sort by total tokens desc (most-used model first).
+        uid = t.get("user_id")
+        if uid:
+            u_agg = users_agg.setdefault(uid, {
+                "user_id": uid, "turns": 0,
+                "input_tokens": 0, "output_tokens": 0,
+            })
+            u_agg["turns"] += 1
+            u_agg["input_tokens"]  += t.get("input_tokens") or 0
+            u_agg["output_tokens"] += t.get("output_tokens") or 0
+
     models_summary = sorted(
         models_agg.values(),
         key=lambda x: -(x["input_tokens"] + x["output_tokens"]),
     )
+
+    # Resolve user_ids to display labels for the per-user breakdown.
+    users_summary = []
+    if users_agg:
+        user_ids = list(users_agg.keys())
+        user_rows = sb.table("users").select(
+            "id, os_username, display_name"
+        ).in_("id", user_ids).execute()
+        user_labels = {
+            r["id"]: r.get("display_name") or r.get("os_username") or "?"
+            for r in (user_rows.data or [])
+        }
+        for uid, agg in users_agg.items():
+            agg["label"] = user_labels.get(uid, "?")
+        users_summary = sorted(
+            users_agg.values(),
+            key=lambda x: -x["turns"],
+        )
 
     return {
         "total_messages":        total,
@@ -149,6 +178,7 @@ def _compute_briefing(sb, session_id):
         "tools_used":            tools_used,
         "continuation_detected": cont,
         "models_summary":        models_summary,
+        "users_summary":         users_summary,
     }
 
 
@@ -197,7 +227,7 @@ class handler(BaseHTTPRequestHandler):
         msgs = (
             sb.table("messages")
             .select("role, timestamp, text_content, content_blocks, "
-                    "tool_uses, tool_results, message_uuid, turn_id")
+                    "tool_uses, tool_results, message_uuid, turn_id, user_id")
             .eq("session_id", sid)
             .order("timestamp")
             .range(offset, offset + limit - 1)
@@ -225,6 +255,19 @@ class handler(BaseHTTPRequestHandler):
                 for t in (tres.data or []):
                     turns_by_id[t["id"]] = t
 
+        # Resolve user_ids to labels for per-message attribution.
+        msg_user_ids = list({
+            m["user_id"] for m in (msgs.data or [])
+            if m.get("user_id")
+        })
+        user_labels = {}
+        if msg_user_ids:
+            u_resp = sb.table("users").select(
+                "id, os_username, display_name"
+            ).in_("id", msg_user_ids).execute()
+            for r in (u_resp.data or []):
+                user_labels[r["id"]] = r.get("display_name") or r.get("os_username") or "?"
+
         records = []
         for m in (msgs.data or []):
             rec = {
@@ -235,6 +278,11 @@ class handler(BaseHTTPRequestHandler):
                     "content": m.get("content_blocks") or [],
                 },
             }
+            # Attach user label for multi-user session display.
+            uid = m.get("user_id")
+            if uid and uid in user_labels:
+                rec["user_label"] = user_labels[uid]
+
             # Attach model + token metadata from the linked turn row.
             turn = turns_by_id.get(m.get("turn_id"))
             if turn:

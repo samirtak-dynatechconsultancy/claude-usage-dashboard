@@ -147,15 +147,42 @@ class handler(BaseHTTPRequestHandler):
         users_by_id = {u["id"]: u for u in users}
         machines_by_id = {m["id"]: m for m in machines}
 
+        # Per-session contributor map: session_id → set of user_ids that
+        # have turns in that session. Handles multi-user RDP sessions where
+        # User A and User B both typed in the same Claude Code conversation.
+        session_contributors = {}   # session_id → set(user_id)
+        for t in all_turns:
+            sid = t.get("session_id")
+            uid = t.get("user_id")
+            if sid and uid:
+                session_contributors.setdefault(sid, set()).add(uid)
+
         sessions_all = []
         for s in all_sessions:
             u = users_by_id.get(s["user_id"], {})
             mc = machines_by_id.get(s["machine_id"], {})
+
+            # Build a label showing all contributing users.
+            contrib_ids = session_contributors.get(s["id"], set())
+            contrib_labels = sorted(set(
+                (users_by_id.get(uid, {}).get("display_name")
+                 or users_by_id.get(uid, {}).get("os_username") or "?")
+                for uid in contrib_ids
+            )) if contrib_ids else []
+            primary_label = u.get("display_name") or u.get("os_username") or "?"
+            # If there are multiple contributors, show them all. Otherwise
+            # fall back to the session's own user_id label.
+            if len(contrib_labels) > 1:
+                user_label = ", ".join(contrib_labels)
+            else:
+                user_label = primary_label
+
             sessions_all.append({
                 "session_id":     (s["session_uuid"] or "")[:8],
                 "session_uuid":   s["session_uuid"],          # full UUID for drill-down
                 "user_id":        s["user_id"],
-                "user_label":     u.get("display_name") or u.get("os_username") or "?",
+                "user_label":     user_label,
+                "contributors":   contrib_labels,
                 "machine_label":  mc.get("hostname") or "",
                 "project":        s.get("project_name") or "unknown",
                 "branch":         s.get("git_branch") or "",
