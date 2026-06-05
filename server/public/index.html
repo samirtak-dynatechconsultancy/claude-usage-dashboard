@@ -414,6 +414,11 @@
             title="Manage users — fill in names + emails, see who's active">
       Users
     </button>
+    <button class="signout-btn admin-only" id="manage-machines-btn"
+            onclick="openManageMachines()" hidden
+            title="Manage machines — set aliases, view user-machine mappings">
+      Machines
+    </button>
     <button class="signout-btn admin-only" id="invite-btn"
             onclick="openInviteModal()" hidden
             title="Invite a teammate to view the dashboard">
@@ -574,6 +579,22 @@
              class="filter-input" oninput="filterManageRows()" autocomplete="off">
     </div>
     <div class="modal-content" id="manage-content">
+      <div class="muted" style="text-align:center;padding:30px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Manage machines modal (admin only) -->
+<div class="modal-backdrop" id="machines-backdrop" onclick="closeMachinesOnBackdrop(event)">
+  <div class="modal modal-wide">
+    <button class="close" onclick="closeManageMachines()">&times;</button>
+    <h2>Manage machines</h2>
+    <div class="meta-row">
+      All machines reporting to the dashboard. Set an alias (friendly name) for
+      each machine so charts and tables show readable labels. RDP hosts are
+      marked with a 🖥 badge.
+    </div>
+    <div class="modal-content" id="machines-content">
       <div class="muted" style="text-align:center;padding:30px;">Loading…</div>
     </div>
   </div>
@@ -2012,6 +2033,113 @@ function closeManageUsers() {
 }
 function closeManageOnBackdrop(e) {
   if (e.target.id === 'manage-backdrop') closeManageUsers();
+}
+
+// ─── Manage machines modal (admin) ──────────────────────────────────────────
+let machinesCache = [];
+
+async function openManageMachines() {
+  document.getElementById('machines-content').innerHTML =
+    '<div class="muted" style="text-align:center;padding:30px;">Loading…</div>';
+  document.getElementById('machines-backdrop').classList.add('show');
+
+  try {
+    const res = await fetch('/api/machines-admin', { headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('machines-content').innerHTML =
+        '<div class="muted" style="text-align:center;padding:30px;color:var(--error);">'
+        + esc(data.error || ('HTTP ' + res.status)) + '</div>';
+      return;
+    }
+    machinesCache = data.machines || [];
+    renderMachineRows(machinesCache, data.mappings || [], data.users || []);
+  } catch (e) {
+    document.getElementById('machines-content').innerHTML =
+      '<div class="muted" style="color:var(--error);padding:30px;">Network error: ' + esc(e.message) + '</div>';
+  }
+}
+
+function renderMachineRows(machines, mappings, users) {
+  const mappingsByMachine = {};
+  for (const m of mappings) {
+    (mappingsByMachine[m.machine_id] ||= []).push(m);
+  }
+  const usersById = {};
+  for (const u of users) usersById[u.id] = u;
+
+  const tbody = machines.map(m => {
+    const rdpBadge = m.is_rdp_host ? '<span class="rdp-badge">🖥 RDP</span>' : '';
+    const mMappings = mappingsByMachine[m.id] || [];
+    const mappingHtml = mMappings.length
+      ? mMappings.map(mp => {
+          const u = usersById[mp.user_id] || {};
+          return `<span style="font-size:11px;">${esc(u.label || '?')} (${esc(mp.role)})</span>`;
+        }).join(', ')
+      : '<span class="muted" style="font-size:11px;">auto: ' + esc(m.user_label) + '</span>';
+
+    return `
+    <tr>
+      <td>
+        <span style="font-family:monospace;">${esc(m.hostname)}</span>${rdpBadge}
+        <div class="muted" style="font-size:10px;">fp: ${esc(m.machine_fp)} · ${esc(m.os)}</div>
+      </td>
+      <td>
+        <input class="edit" value="${esc(m.alias || '')}"
+               placeholder="(no alias)"
+               data-hostname="${esc(m.hostname)}" data-machine-id="${esc(m.id)}"
+               onblur="saveMachineAlias(this)"
+               onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
+      </td>
+      <td>${mappingHtml}</td>
+      <td class="muted" style="font-size:11px;">${esc(m.last_seen ? timeAgo(m.last_seen) : 'never')}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('machines-content').innerHTML = `
+    <table class="manage-table">
+      <thead><tr>
+        <th>Machine</th>
+        <th>Alias</th>
+        <th>Mapped Users</th>
+        <th>Last Seen</th>
+      </tr></thead>
+      <tbody>${tbody}</tbody>
+    </table>`;
+}
+
+async function saveMachineAlias(el) {
+  const alias = (el.value || '').trim();
+  const hostname = el.dataset.hostname;
+  const machineId = el.dataset.machineId;
+  if (!hostname) return;
+
+  el.classList.add('saving');
+  try {
+    const res = await fetch('/api/machines-admin?id=' + encodeURIComponent(machineId), {
+      method: 'PATCH',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: alias, alias: alias, hostname: hostname }),
+    });
+    const data = await res.json();
+    el.classList.remove('saving');
+    if (res.ok) {
+      el.classList.add('saved');
+      setTimeout(() => el.classList.remove('saved'), 1200);
+    } else {
+      alert('Save failed: ' + (data.error || ('HTTP ' + res.status)));
+    }
+  } catch (e) {
+    el.classList.remove('saving');
+    alert('Network error: ' + e.message);
+  }
+}
+
+function closeManageMachines() {
+  document.getElementById('machines-backdrop').classList.remove('show');
+}
+function closeMachinesOnBackdrop(e) {
+  if (e.target.id === 'machines-backdrop') closeManageMachines();
 }
 
 // ─── Invite modal ──────────────────────────────────────────────────────────

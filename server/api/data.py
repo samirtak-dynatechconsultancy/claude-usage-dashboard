@@ -46,7 +46,9 @@ class handler(BaseHTTPRequestHandler):
         sb = service_client()
 
         # ── users (for the filter dropdown) ─────────────────────────────────
-        users = sb.table("users").select(
+        # Fetch all users, then filter out those with zero turns below (after
+        # we've loaded turns) so the dropdown only shows active users.
+        all_users_raw = sb.table("users").select(
             "id, os_username, display_name, email, last_seen"
         ).order("os_username").execute().data or []
 
@@ -156,9 +158,21 @@ class handler(BaseHTTPRequestHandler):
             for (d, h, m), vals in sorted(hourly_keyed.items())
         ]
 
+        # Filter users to only those with at least one turn — keeps the
+        # dropdown clean (no stale machine-name pseudo-users with zero data).
+        user_ids_with_turns = {t["user_id"] for t in all_turns if t.get("user_id")}
+        users = [u for u in all_users_raw if u["id"] in user_ids_with_turns]
+        # Also include the currently filtered user even if they have no turns
+        # in the current filter set (so the dropdown can show "clear" properly).
+        if filter_user_id and filter_user_id not in user_ids_with_turns:
+            for u in all_users_raw:
+                if u["id"] == filter_user_id:
+                    users.append(u)
+                    break
+
         # ── sessions list for the table ─────────────────────────────────────
         # Build a quick lookup of user/machine display strings.
-        users_by_id = {u["id"]: u for u in users}
+        users_by_id = {u["id"]: u for u in all_users_raw}
         machines_by_id = {m["id"]: m for m in machines}
 
         # Per-session contributor map: session_id → set of user_ids that
