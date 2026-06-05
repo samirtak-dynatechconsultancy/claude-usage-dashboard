@@ -101,10 +101,11 @@ class handler(BaseHTTPRequestHandler):
                 break
             page += 1
 
-        # ── Aggregate: daily by model, hourly by model, model list ──────────
+        # ── Aggregate: daily by model, hourly by model, daily by user ─────
         all_models_counts = {}
         daily_keyed = {}      # (day, model) → sums
         hourly_keyed = {}     # (day, hour, model) → sums
+        daily_user_keyed = {} # (day, user_id) → sums
 
         for t in all_turns:
             model = t["model"] or "unknown"
@@ -130,6 +131,19 @@ class handler(BaseHTTPRequestHandler):
             h = hourly_keyed.setdefault(hk, {"output": 0, "turns": 0})
             h["output"] += out
             h["turns"] += 1
+
+            # Per-user daily aggregation for the "Daily Usage by User" chart.
+            uid = t.get("user_id")
+            if uid:
+                duk = (day, uid)
+                du = daily_user_keyed.setdefault(duk, {"input": 0, "output": 0,
+                                                        "cache_read": 0, "cache_creation": 0,
+                                                        "turns": 0})
+                du["input"] += inp
+                du["output"] += out
+                du["cache_read"] += cr
+                du["cache_creation"] += cc
+                du["turns"] += 1
 
         all_models = sorted(all_models_counts.keys(),
                             key=lambda m: -all_models_counts[m])
@@ -218,6 +232,13 @@ class handler(BaseHTTPRequestHandler):
             } for m in machines],
             "all_models":      all_models,
             "daily_by_model":  daily_by_model,
+            "daily_by_user":   [
+                {"day": d, "user_id": uid,
+                 "user_label": (users_by_id.get(uid, {}).get("display_name")
+                                or users_by_id.get(uid, {}).get("os_username") or "?"),
+                 **vals}
+                for (d, uid), vals in sorted(daily_user_keyed.items())
+            ],
             "hourly_by_model": hourly_by_model,
             "sessions":        sessions_all,
         })

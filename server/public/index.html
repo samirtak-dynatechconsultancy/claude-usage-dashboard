@@ -479,6 +479,17 @@
       <div class="chart-wrap"><canvas id="chart-model"></canvas></div>
     </div>
     <div class="chart-card">
+      <h2>Cost by User<span class="help" data-tip="Estimated cost distribution across teammates. Each user's cost is the sum of their session costs, computed per-turn at the model's rate."></span></h2>
+      <div class="chart-wrap"><canvas id="chart-user-cost"></canvas></div>
+    </div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-card wide">
+      <h2 id="daily-user-chart-title">Daily Usage by User<span class="help" data-tip="Stacked daily token totals (input + output) per user. Shows who's using Claude Code each day and how much."></span></h2>
+      <div class="chart-wrap tall"><canvas id="chart-daily-user"></canvas></div>
+    </div>
+    <div class="chart-card">
       <h2>Top Users by Tokens<span class="help" title="Top 10 teammates ranked by total (input + output) tokens in the selected range." data-tip="Top 10 teammates ranked by total (input + output) tokens in the selected range."></span></h2>
       <div class="chart-wrap"><canvas id="chart-user"></canvas></div>
     </div>
@@ -497,6 +508,22 @@
         <th>Est. Cost<span class="help help-right" data-tip="Sum of input × input rate + output × output rate + cache reads × cache-read rate + cache writes × cache-write rate. Based on Anthropic's published API pricing."></span></th>
       </tr></thead>
       <tbody id="model-cost-body"></tbody>
+    </table>
+  </div>
+
+  <div class="table-card">
+    <div class="section-title">Cost by User<span class="help" data-tip="Per-user breakdown of usage and cost. Each user's cost is the sum of all their session costs across the selected filters."></span></div>
+    <table>
+      <thead><tr>
+        <th>User</th>
+        <th>Sessions</th>
+        <th>Input</th>
+        <th>Output</th>
+        <th>Cache Read</th>
+        <th>Cache Write</th>
+        <th>Est. Cost</th>
+      </tr></thead>
+      <tbody id="user-cost-body"></tbody>
     </table>
   </div>
 
@@ -1232,14 +1259,35 @@ function applyFilter() {
     if (byModel[s.model]) byModel[s.model].sessions++;
   }
 
-  // By user
+  // By user (full breakdown for table + charts)
   const byUser = {};
   for (const s of filteredSessions) {
-    const u = byUser[s.user_label] ||= { label: s.user_label, input: 0, output: 0, sessions: 0, cost: 0 };
-    u.input += s.input; u.output += s.output; u.sessions++;
+    const u = byUser[s.user_label] ||= {
+      label: s.user_label, input: 0, output: 0,
+      cache_read: 0, cache_creation: 0,
+      sessions: 0, cost: 0,
+    };
+    u.input += s.input; u.output += s.output;
+    u.cache_read += s.cache_read; u.cache_creation += s.cache_creation;
+    u.sessions++;
     u.cost += calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
   }
-  const byUserSorted = Object.values(byUser).sort((a, b) => (b.input + b.output) - (a.input + a.output)).slice(0, 10);
+  const byUserSorted = Object.values(byUser).sort((a, b) => b.cost - a.cost);
+  const byUserTop10 = byUserSorted.slice(0, 10);
+
+  // Daily by user (for the stacked daily chart)
+  const dailyByUser = {};  // day → { user_label → tokens }
+  const allUserLabels = new Set();
+  for (const r of (rawData.daily_by_user || [])) {
+    if (start && r.day < start) continue;
+    if (end && r.day > end) continue;
+    const d = dailyByUser[r.day] ||= {};
+    const lbl = r.user_label || '?';
+    d[lbl] = (d[lbl] || 0) + (r.input || 0) + (r.output || 0);
+    allUserLabels.add(lbl);
+  }
+  const dailyUserDays = Object.keys(dailyByUser).sort();
+  const userLabelList = [...allUserLabels].sort();
 
   // Totals
   const totals = {
@@ -1258,8 +1306,11 @@ function applyFilter() {
   renderStats(totals);
   renderDailyChart(dailySorted);
   renderModelChart(byModelSorted);
-  renderUserChart(byUserSorted);
+  renderUserChart(byUserTop10);
+  renderUserCostChart(byUserSorted);
+  renderDailyUserChart(dailyUserDays, userLabelList, dailyByUser);
   renderModelCostTable(byModelSorted);
+  renderUserCostTable(byUserSorted);
   renderSessionsTable(filteredSessions.slice(0, 50));
 }
 
@@ -1358,6 +1409,64 @@ function renderUserChart(rows) {
       },
     },
   });
+}
+
+const USER_COLORS = ['#4f8ef7','#d97757','#4ade80','#a78bfa','#fbbf24','#f472b6','#34d399','#60a5fa','#fb7185','#818cf8'];
+
+function renderUserCostChart(rows) {
+  const ctx = document.getElementById('chart-user-cost').getContext('2d');
+  if (charts.userCost) charts.userCost.destroy();
+  charts.userCost = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: rows.map(r => r.label),
+      datasets: [{ data: rows.map(r => r.cost),
+                   backgroundColor: rows.map((_, i) => USER_COLORS[i % USER_COLORS.length]) }],
+    },
+    options: { responsive: true, maintainAspectRatio: false,
+               plugins: { legend: { position: 'right', labels: { color: '#8892a4', font: { size: 11 } } },
+                          tooltip: { callbacks: { label: ctx => ctx.label + ': $' + ctx.parsed.toFixed(2) } } } },
+  });
+}
+
+function renderDailyUserChart(days, userLabels, dailyByUser) {
+  const ctx = document.getElementById('chart-daily-user').getContext('2d');
+  if (charts.dailyUser) charts.dailyUser.destroy();
+  charts.dailyUser = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: userLabels.map((lbl, i) => ({
+        label: lbl,
+        data: days.map(d => (dailyByUser[d] || {})[lbl] || 0),
+        backgroundColor: USER_COLORS[i % USER_COLORS.length],
+        stack: 's',
+      })),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8892a4' } } },
+      scales: {
+        x: { stacked: true, ticks: { color: '#8892a4' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+        y: { stacked: true, ticks: { color: '#8892a4', callback: v => fmt(v) },
+             grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+    },
+  });
+}
+
+function renderUserCostTable(rows) {
+  document.getElementById('user-cost-body').innerHTML = rows.map(r => {
+    return `<tr>
+      <td><strong>${esc(r.label)}</strong></td>
+      <td class="num">${r.sessions.toLocaleString()}</td>
+      <td class="num">${fmt(r.input)}</td>
+      <td class="num">${fmt(r.output)}</td>
+      <td class="num">${fmt(r.cache_read)}</td>
+      <td class="num">${fmt(r.cache_creation)}</td>
+      <td class="cost">${fmtCost(r.cost)}</td>
+    </tr>`;
+  }).join('');
 }
 
 function renderModelCostTable(rows) {
