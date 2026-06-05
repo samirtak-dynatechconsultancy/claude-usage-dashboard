@@ -184,12 +184,9 @@ class handler(BaseHTTPRequestHandler):
                 for uid in contrib_ids
             )) if contrib_ids else []
             primary_label = u.get("display_name") or u.get("os_username") or "?"
-            # If there are multiple contributors, show them all. Otherwise
-            # fall back to the session's own user_id label.
-            if len(contrib_labels) > 1:
-                user_label = ", ".join(contrib_labels)
-            else:
-                user_label = primary_label
+            # user_label is always the single primary user (for chart grouping).
+            # contributors carries all users for display in the session table.
+            user_label = primary_label
 
             sessions_all.append({
                 "session_id":     (s["session_uuid"] or "")[:8],

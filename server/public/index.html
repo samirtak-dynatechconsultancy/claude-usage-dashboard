@@ -1259,20 +1259,40 @@ function applyFilter() {
     if (byModel[s.model]) byModel[s.model].sessions++;
   }
 
-  // By user (full breakdown for table + charts)
+  // By user — computed from per-turn daily_by_user data (not sessions),
+  // so multi-user sessions are correctly split into individual users.
+  // Session counts are added separately from filteredSessions.
   const byUser = {};
-  for (const s of filteredSessions) {
-    const u = byUser[s.user_label] ||= {
-      label: s.user_label, input: 0, output: 0,
+  for (const r of (rawData.daily_by_user || [])) {
+    if (start && r.day < start) continue;
+    if (end && r.day > end) continue;
+    const lbl = r.user_label || '?';
+    const u = byUser[lbl] ||= {
+      label: lbl, input: 0, output: 0,
       cache_read: 0, cache_creation: 0,
-      sessions: 0, cost: 0,
+      turns: 0, sessions: 0, cost: 0,
     };
-    u.input += s.input; u.output += s.output;
-    u.cache_read += s.cache_read; u.cache_creation += s.cache_creation;
-    u.sessions++;
-    u.cost += calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
+    u.input += r.input || 0; u.output += r.output || 0;
+    u.cache_read += r.cache_read || 0; u.cache_creation += r.cache_creation || 0;
+    u.turns += r.turns || 0;
   }
-  const byUserSorted = Object.values(byUser).sort((a, b) => b.cost - a.cost);
+  // Session counts: attribute each session to its primary user (first contributor).
+  for (const s of filteredSessions) {
+    const contribs = s.contributors && s.contributors.length ? s.contributors : [s.user_label];
+    const primary = contribs[0];
+    if (byUser[primary]) byUser[primary].sessions++;
+  }
+  // Compute cost from tokens (same formula as per-turn, using average model rate).
+  // Since we don't have per-model breakdown per user from daily_by_user, estimate
+  // from sessions where we have the model.
+  for (const s of filteredSessions) {
+    const contribs = s.contributors && s.contributors.length ? s.contributors : [s.user_label];
+    const primary = contribs[0];
+    if (byUser[primary]) {
+      byUser[primary].cost += calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
+    }
+  }
+  const byUserSorted = Object.values(byUser).sort((a, b) => (b.input + b.output) - (a.input + a.output));
   const byUserTop10 = byUserSorted.slice(0, 10);
 
   // Daily by user (for the stacked daily chart)
@@ -1487,8 +1507,12 @@ function renderModelCostTable(rows) {
 function renderSessionsTable(rows) {
   document.getElementById('sessions-body').innerHTML = rows.map(s => {
     const cost = calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
+    const contribs = (s.contributors || []);
+    const multiTag = contribs.length > 1
+      ? ` <span class="muted" style="font-size:10px;" title="${esc(contribs.join(', '))}">(+${contribs.length - 1} more)</span>`
+      : '';
     return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
-      <td>${esc(s.user_label)}</td>
+      <td>${esc(s.user_label)}${multiTag}</td>
       <td class="muted">${esc(s.machine_label)}</td>
       <td class="muted num">${esc(s.session_id)}</td>
       <td>${esc(s.project)}</td>
