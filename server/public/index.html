@@ -748,14 +748,13 @@ function authHeaders() {
   return { 'Authorization': 'Bearer ' + session.access_token };
 }
 
-async function loadData(isPoll = false) {
+async function loadData({showLoading = false, silent = false} = {}) {
   if (loadInProgress) return;
   loadInProgress = true;
 
-  // Show loading overlay for user-triggered fetches (filter change, manual
-  // refresh), but not for silent background polls — those shouldn't flash.
+  // Only show the overlay when the user explicitly changed a filter.
   const overlay = document.getElementById('loading-overlay');
-  if (!isPoll && overlay) overlay.classList.add('show');
+  if (showLoading && overlay) overlay.classList.add('show');
 
   try {
     const params = [];
@@ -764,37 +763,24 @@ async function loadData(isPoll = false) {
     const qs = params.length ? '?' + params.join('&') : '';
     const res = await fetch('/api/data' + qs, { headers: authHeaders() });
     if (!res.ok) {
-      // Hard-fail the first load (user needs to know auth is broken). Stay
-      // quiet on poll failures so a flaky network blip doesn't surface as
-      // a scary error — the next tick retries.
-      if (!isPoll) showStatus('Failed to load data: HTTP ' + res.status, true);
+      if (!silent) showStatus('Failed to load data: HTTP ' + res.status, true);
       return;
     }
     rawData = await res.json();
     lastUpdatedAt = new Date();
 
-    // ── User combobox: refresh in place ──────────────────────────────────
     syncUserComboboxInput();
     if (!document.getElementById('user-results').hidden) {
       renderUserResults(document.getElementById('user-search').value);
     }
-
-    // ── Machine dropdown: refresh in place ─────────────────────────────
     syncMachineDropdown();
-
-    // ── Model multi-select: refresh menu + label in place ────────────────
-    // selectedModels is the source of truth (Set or null=all). The new model
-    // list may have grown -- if a previously-selected model disappears, it
-    // stays in selectedModels until the next user interaction, harmless.
     renderModelMenu();
     updateModelTriggerLabel();
 
     applyFilter();
     updateLastSeenLabel();
   } catch (e) {
-    if (!isPoll) showStatus('Network error: ' + e.message, true);
-    // else: swallow — the tick label will keep ageing so the user sees
-    // we're falling behind ("3m ago", "5m ago", ...).
+    if (!silent) showStatus('Network error: ' + e.message, true);
   } finally {
     loadInProgress = false;
     if (overlay) overlay.classList.remove('show');
@@ -803,13 +789,13 @@ async function loadData(isPoll = false) {
 
 // ─── Polling helpers ────────────────────────────────────────────────────────
 async function refreshNow() {
-  await loadData(false);
+  await loadData();
 }
 
 function startPolling() {
   if (pollHandle) return;   // already running
   pollHandle = setInterval(() => {
-    if (!document.hidden) loadData(true);
+    if (!document.hidden) loadData({silent: true});
   }, POLL_INTERVAL_MS);
 }
 
@@ -1037,13 +1023,13 @@ function selectUser(id, label) {
   }
   document.getElementById('user-results').hidden = true;
   input.blur();
-  loadData();
+  loadData({showLoading: true});
 }
 
 // ─── Machine filter ────────────────────────────────────────────────────────
 function selectMachine(id) {
   selectedMachine = id;
-  loadData();
+  loadData({showLoading: true});
 }
 
 function syncMachineDropdown() {
