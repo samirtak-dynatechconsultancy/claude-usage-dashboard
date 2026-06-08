@@ -20,41 +20,44 @@ from lib.supabase_client import service_client
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        body, err = read_json(self, max_bytes=4096)
-        if err:
-            return write_json(self, err[0], err[1])
+        try:
+            body, err = read_json(self, max_bytes=4096)
+            if err:
+                return write_json(self, err[0], err[1])
 
-        email = (body.get("email") or "").strip().lower()
-        password = (body.get("password") or "").strip()
+            email = (body.get("email") or "").strip().lower()
+            password = (body.get("password") or "").strip()
 
-        if not email or not password:
-            return write_json(self, 400, {"error": "email and password required"})
+            if not email or not password:
+                return write_json(self, 400, {"error": "email and password required"})
 
-        db = service_client()
+            db = service_client()
 
-        # Look up the user in dashboard_users.
-        row = (
-            db.table("dashboard_users")
-            .select("email, role, password_hash")
-            .eq("email", email)
-            .limit(1)
-            .execute()
-        )
-        if not row.data:
-            return write_json(self, 401, {"error": "invalid email or password"})
+            # Look up the user in dashboard_users.
+            row = (
+                db.table("dashboard_users")
+                .select("email, role, password_hash")
+                .eq("email", email)
+                .limit(1)
+                .execute()
+            )
+            if not row.data:
+                return write_json(self, 401, {"error": "invalid email or password"})
 
-        user = row.data[0]
-        stored_hash = user.get("password_hash") or ""
+            user = row.data[0]
+            stored_hash = user.get("password_hash") or ""
 
-        # Verify password.
-        if not stored_hash or hash_password(password) != stored_hash:
-            return write_json(self, 401, {"error": "invalid email or password"})
+            # Verify password.
+            if not stored_hash or hash_password(password) != stored_hash:
+                return write_json(self, 401, {"error": "invalid email or password"})
 
-        role = user.get("role", "viewer")
-        token = issue_jwt(email, role)
+            role = user.get("role", "viewer")
+            token = issue_jwt(email, role)
 
-        return write_json(self, 200, {
-            "token": token,
-            "email": email,
-            "role":  role,
-        })
+            return write_json(self, 200, {
+                "token": token,
+                "email": email,
+                "role":  role,
+            })
+        except Exception as exc:
+            return write_json(self, 500, {"error": f"Server error: {exc}"})

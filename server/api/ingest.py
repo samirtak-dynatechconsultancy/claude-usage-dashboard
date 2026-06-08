@@ -148,6 +148,12 @@ def parse_message_content(content):
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
+        try:
+            return self._handle()
+        except Exception as exc:
+            return write_json(self, 500, {"error": f"Server error: {exc}"})
+
+    def _handle(self):
         if not verify_ingest_token(self.headers.get("X-Ingest-Token")):
             return write_json(self, 401, {"error": "invalid ingest token"})
 

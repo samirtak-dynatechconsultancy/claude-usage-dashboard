@@ -30,6 +30,12 @@ VALID_ROLES = {"viewer", "admin"}
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
+        try:
+            return self._handle()
+        except Exception as exc:
+            return write_json(self, 500, {"error": f"Server error: {exc}"})
+
+    def _handle(self):
         ok, caller_email, caller_role = verify_dashboard_user(self.headers.get("Authorization"))
         if not ok:
             return write_json(self, 401, {"error": "not authorized"})
