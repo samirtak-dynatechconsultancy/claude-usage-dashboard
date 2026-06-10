@@ -20,15 +20,24 @@ from lib.http import write_json
 from lib.supabase_client import service_client
 
 
-def _iso_day(ts: str) -> str:
-    return (ts or "")[:10]
+def _iso_day(ts) -> str:
+    if not ts:
+        return ""
+    if hasattr(ts, "strftime"):
+        return ts.strftime("%Y-%m-%d")
+    return str(ts)[:10]
 
 
-def _iso_hour(ts: str) -> int:
-    if not ts or len(ts) < 13:
+def _iso_hour(ts) -> int:
+    if not ts:
+        return 0
+    if hasattr(ts, "hour"):
+        return ts.hour
+    s = str(ts)
+    if len(s) < 13:
         return 0
     try:
-        return int(ts[11:13])
+        return int(s[11:13])
     except ValueError:
         return 0
 
@@ -229,9 +238,9 @@ class handler(BaseHTTPRequestHandler):
             user_label = primary_label
 
             sessions_all.append({
-                "session_id":     (s["session_uuid"] or "")[:8],
-                "session_uuid":   s["session_uuid"],          # full UUID for drill-down
-                "user_id":        s["user_id"],
+                "session_id":     str(s["session_uuid"] or "")[:8],
+                "session_uuid":   str(s["session_uuid"] or ""),
+                "user_id":        str(s["user_id"] or ""),
                 "user_label":     user_label,
                 "contributors":   contrib_labels,
                 "machine_label":  mc.get("hostname") or "",
@@ -241,10 +250,10 @@ class handler(BaseHTTPRequestHandler):
                 # Raw ISO timestamps; the client formats in Asia/Kolkata for
                 # display. "last" stays for backward compat with older clients
                 # but new builds use last_timestamp directly.
-                "last":             (s.get("last_timestamp") or "")[:16].replace("T", " "),
-                "last_timestamp":   s.get("last_timestamp"),
-                "first_timestamp":  s.get("first_timestamp"),
-                "last_date":      (s.get("last_timestamp") or "")[:10],
+                "last":             _iso_day(s.get("last_timestamp")),
+                "last_timestamp":   str(s.get("last_timestamp") or ""),
+                "first_timestamp":  str(s.get("first_timestamp") or ""),
+                "last_date":      _iso_day(s.get("last_timestamp")),
                 "model":          s.get("model") or "unknown",
                 "turns":          s.get("turn_count") or 0,
                 "input":          s.get("total_input_tokens") or 0,
