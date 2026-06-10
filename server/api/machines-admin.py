@@ -31,6 +31,12 @@ def _require_admin(self):
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        try:
+            return self._do_get()
+        except Exception as exc:
+            return write_json(self, 500, {"error": f"Server error: {exc}"})
+
+    def _do_get(self):
         if _require_admin(self) is None:
             return
 
@@ -113,6 +119,12 @@ class handler(BaseHTTPRequestHandler):
         })
 
     def do_PATCH(self):
+        try:
+            return self._do_patch()
+        except Exception as exc:
+            return write_json(self, 500, {"error": f"Server error: {exc}"})
+
+    def _do_patch(self):
         if _require_admin(self) is None:
             return
 
@@ -153,6 +165,12 @@ class handler(BaseHTTPRequestHandler):
         return write_json(self, 200, {"ok": True})
 
     def do_POST(self):
+        try:
+            return self._do_post()
+        except Exception as exc:
+            return write_json(self, 500, {"error": f"Server error: {exc}"})
+
+    def _do_post(self):
         """Create or delete a user-machine mapping."""
         if _require_admin(self) is None:
             return

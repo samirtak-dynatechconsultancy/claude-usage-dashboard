@@ -17,18 +17,21 @@ from lib.http import write_json
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        auth = self.headers.get("Authorization")
-        if not auth:
-            return write_json(self, 401, {"error": "missing Authorization header"})
+        try:
+            auth = self.headers.get("Authorization")
+            if not auth:
+                return write_json(self, 401, {"error": "missing Authorization header"})
 
-        ok, email, role = verify_dashboard_user(auth)
-        if not ok and email:
-            # JWT was valid but email isn't allowlisted — tell the UI clearly.
-            return write_json(self, 403, {
-                "error": f"{email} is not in the dashboard allowlist",
-                "email": email,
-            })
-        if not ok:
-            return write_json(self, 401, {"error": "invalid token"})
+            ok, email, role = verify_dashboard_user(auth)
+            if not ok and email:
+                # JWT was valid but email isn't allowlisted — tell the UI clearly.
+                return write_json(self, 403, {
+                    "error": f"{email} is not in the dashboard allowlist",
+                    "email": email,
+                })
+            if not ok:
+                return write_json(self, 401, {"error": "invalid token"})
 
-        return write_json(self, 200, {"ok": True, "email": email, "role": role})
+            return write_json(self, 200, {"ok": True, "email": email, "role": role})
+        except Exception as exc:
+            return write_json(self, 500, {"error": f"Server error: {exc}"})

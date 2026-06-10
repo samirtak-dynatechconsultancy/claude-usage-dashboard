@@ -1,5 +1,11 @@
 # Vercel Python serverless runtime resolves this for /api/**/*.py.
 # Keep this list lean — every package adds cold-start time.
 
-supabase==2.9.1
-# pinned to a recent stable; supabase-py bundles postgrest, gotrue, storage3, realtime
+psycopg2-binary==2.9.9
+# Direct PostgreSQL driver for Azure Database for PostgreSQL.
+# -binary variant bundles libpq so it works in Vercel's Lambda runtime
+# without system-level package installs.
+
+PyJWT==2.9.0
+# JWT token signing/verification for dashboard auth.
+# Replaces Supabase Auth (gotrue).
