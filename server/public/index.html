@@ -1462,22 +1462,13 @@ function applyFilter() {
     u.input += r.input || 0; u.output += r.output || 0;
     u.cache_read += r.cache_read || 0; u.cache_creation += r.cache_creation || 0;
     u.turns += r.turns || 0;
+    u.cost += r.cost || 0;
   }
   // Session counts: attribute each session to its primary user (first contributor).
   for (const s of filteredSessions) {
     const contribs = s.contributors && s.contributors.length ? s.contributors : [s.user_label];
     const primary = contribs[0];
     if (byUser[primary]) byUser[primary].sessions++;
-  }
-  // Compute cost from tokens (same formula as per-turn, using average model rate).
-  // Since we don't have per-model breakdown per user from daily_by_user, estimate
-  // from sessions where we have the model.
-  for (const s of filteredSessions) {
-    const contribs = s.contributors && s.contributors.length ? s.contributors : [s.user_label];
-    const primary = contribs[0];
-    if (byUser[primary]) {
-      byUser[primary].cost += calcCost(s.model, s.input, s.output, s.cache_read, s.cache_creation);
-    }
   }
   const byUserSorted = Object.values(byUser).sort((a, b) => (b.input + b.output) - (a.input + a.output));
   const byUserTop10 = byUserSorted.slice(0, 10);

@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from lib.auth import verify_dashboard_user
 from lib.http import write_json
+from lib.pricing import calc_cost as _calc_cost
 from lib.supabase_client import service_client
 
 
@@ -117,6 +118,13 @@ class handler(BaseHTTPRequestHandler):
             page += 1
 
         # ── sessions ────────────────────────────────────────────────────────
+        # Derive session IDs from turns so we find sessions where the user
+        # has turns even if the session row is owned by a different user_id
+        # (common after migrations or on shared RDP hosts).
+        turn_session_ids = list({
+            t["session_id"] for t in all_turns if t.get("session_id")
+        })
+
         sq = sb.table("sessions").select(
             "id, session_uuid, user_id, machine_id, project_name, git_branch, "
             "first_timestamp, last_timestamp, model, turn_count, "
@@ -124,8 +132,11 @@ class handler(BaseHTTPRequestHandler):
             "total_cache_read, total_cache_creation"
         ).order("last_timestamp", desc=True)
         if filter_user_id:
-            sq = sq.eq("user_id", filter_user_id)
-        if filter_machine_ids:
+            if turn_session_ids:
+                sq = sq.in_("id", turn_session_ids)
+            else:
+                sq = sq.eq("user_id", filter_user_id)
+        elif filter_machine_ids:
             sq = sq.in_("machine_id", list(filter_machine_ids))
         all_sessions = []
         page = 0
@@ -175,12 +186,13 @@ class handler(BaseHTTPRequestHandler):
                 duk = (day, uid)
                 du = daily_user_keyed.setdefault(duk, {"input": 0, "output": 0,
                                                         "cache_read": 0, "cache_creation": 0,
-                                                        "turns": 0})
+                                                        "turns": 0, "cost": 0})
                 du["input"] += inp
                 du["output"] += out
                 du["cache_read"] += cr
                 du["cache_creation"] += cc
                 du["turns"] += 1
+                du["cost"] += _calc_cost(model, inp, out, cr, cc)
 
         all_models = sorted(all_models_counts.keys(),
                             key=lambda m: -all_models_counts[m])
