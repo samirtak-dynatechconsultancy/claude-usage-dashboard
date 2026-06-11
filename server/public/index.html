@@ -416,9 +416,90 @@
   #status { text-align: center; padding: 60px; color: var(--muted); }
   #status.error { color: var(--error); }
 
+  /* ── Tab navigation ─────────────────────────────────────────── */
+  .tab-bar {
+    background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 0 24px; display: flex; gap: 0;
+  }
+  .tab-btn {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    color: var(--muted); padding: 12px 20px; font-size: 13px; font-weight: 600;
+    cursor: pointer; font-family: inherit; text-transform: uppercase;
+    letter-spacing: 0.05em; transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Custom date range inputs ────────────────────────────── */
+  .date-range-custom {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .date-range-custom input[type="date"] {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 4px 8px; border-radius: 6px; font-size: 12px; font-family: inherit;
+  }
+  .date-range-custom input[type="date"]:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .date-range-custom span { color: var(--muted); font-size: 12px; }
+
+  /* ── Active filter chips ─────────────────────────────────── */
+  .active-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(217,119,87,0.12); color: var(--accent);
+    padding: 3px 8px 3px 10px; border-radius: 12px; font-size: 11px;
+    font-family: inherit; border: none; cursor: default;
+  }
+  .filter-chip .chip-remove {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 14px; line-height: 1; padding: 0 2px; opacity: 0.7;
+  }
+  .filter-chip .chip-remove:hover { opacity: 1; }
+
+  /* ── Session toolbar ─────────────────────────────────────── */
+  .session-toolbar {
+    display: flex; align-items: center; gap: 16px; margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .session-search-input {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 12px; border-radius: 6px; font-size: 13px; font-family: inherit;
+    min-width: 280px; flex: 1; max-width: 500px;
+  }
+  .session-search-input:focus { outline: none; border-color: var(--accent); }
+  .session-search-input::placeholder { color: var(--muted); }
+  .session-count { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .session-page-size { display: flex; align-items: center; gap: 6px; }
+  .session-page-size label {
+    color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  }
+
+  /* ── Pagination controls ─────────────────────────────────── */
+  .pagination {
+    display: flex; align-items: center; justify-content: center;
+    gap: 6px; padding: 16px 0; margin-top: 8px;
+  }
+  .page-btn {
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    font-family: inherit; min-width: 32px; text-align: center;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .page-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  .page-btn.active {
+    background: rgba(217,119,87,0.15); color: var(--accent);
+    border-color: var(--accent); font-weight: 600;
+  }
+  .page-info { color: var(--muted); font-size: 12px; }
+
   @media (max-width: 768px) {
     .charts-grid { grid-template-columns: 1fr; }
     .chart-card.wide { grid-column: 1; }
+    .session-toolbar { flex-direction: column; align-items: stretch; }
+    .session-search-input { min-width: unset; max-width: unset; }
   }
 </style>
 </head>
@@ -500,7 +581,19 @@
     <button class="range-btn active" data-range="30d">30d</button>
     <button class="range-btn" data-range="90d">90d</button>
     <button class="range-btn" data-range="all">All</button>
+    <button class="range-btn" data-range="custom">Custom</button>
   </div>
+  <div id="custom-date-range" class="date-range-custom" style="display:none;">
+    <input type="date" id="date-from" title="From date">
+    <span>to</span>
+    <input type="date" id="date-to" title="To date">
+  </div>
+  <div id="active-filters" class="active-filters"></div>
+</div>
+
+<div class="tab-bar" id="tab-bar">
+  <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">Overview</button>
+  <button class="tab-btn" data-tab="sessions" onclick="switchTab('sessions')">Sessions</button>
 </div>
 
 <div class="container" id="main-container">
@@ -508,6 +601,7 @@
     <div class="loading-spinner"></div>
     <div class="loading-text">Loading…</div>
   </div>
+  <div id="tab-overview" class="tab-panel active">
   <div class="stats-row" id="stats-row"></div>
 
   <div class="charts-grid">
@@ -567,9 +661,25 @@
       <tbody id="user-cost-body"></tbody>
     </table>
   </div>
+  </div><!-- /tab-overview -->
 
+  <div id="tab-sessions" class="tab-panel">
+  <div class="session-toolbar">
+    <input type="text" id="session-search" class="session-search-input"
+           placeholder="Search by user, project, model, branch…"
+           oninput="filterAndPaginateSessions()" autocomplete="off">
+    <div class="session-page-size">
+      <label>Per page</label>
+      <select id="page-size-select" class="filter-input" onchange="changePageSize()" style="width:auto;">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+    <div class="session-count" id="session-count"></div>
+  </div>
   <div class="table-card">
-    <div class="section-title">Recent Sessions<span class="help" data-tip="Up to 50 most recent sessions matching the current filters. Click any row to open the conversation drill-down."></span> <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view the conversation</span></div>
+    <div class="section-title">Sessions<span class="help" data-tip="All sessions matching the current filters. Click any row to open the conversation drill-down."></span> <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view conversation</span></div>
     <table>
       <thead><tr>
         <th>User<span class="help" data-tip="OS username of the teammate who ran Claude Code on the source machine."></span></th>
@@ -586,6 +696,8 @@
       <tbody id="sessions-body"></tbody>
     </table>
   </div>
+  <div class="pagination" id="pagination"></div>
+  </div><!-- /tab-sessions -->
 </div>
 
 </div><!-- /#app -->
@@ -678,6 +790,13 @@ let selectedUser = '';
 let selectedMachine = '';
 let selectedSource = 'all';  // 'all' | 'local' | 'rdp'
 let selectedModels = null;  // null = all
+let currentTab = 'overview';
+let sessionPage = 1;
+let sessionPageSize = 50;
+let sessionSearchQuery = '';
+let allFilteredSessions = [];
+let customDateFrom = '';
+let customDateTo = '';
 const charts = {};
 
 // ─── Auto-refresh polling ───────────────────────────────────────────────────
@@ -718,9 +837,16 @@ async function init() {
       selectedRange = btn.dataset.range;
       document.querySelectorAll('.range-btn').forEach(b =>
         b.classList.toggle('active', b === btn));
+      const customEl = document.getElementById('custom-date-range');
+      if (customEl) customEl.style.display = selectedRange === 'custom' ? 'flex' : 'none';
       applyFilter();
     });
   });
+  // Custom date inputs
+  const dateFromEl = document.getElementById('date-from');
+  const dateToEl = document.getElementById('date-to');
+  if (dateFromEl) dateFromEl.addEventListener('change', () => { customDateFrom = dateFromEl.value; applyFilter(); });
+  if (dateToEl) dateToEl.addEventListener('change', () => { customDateTo = dateToEl.value; applyFilter(); });
 
   await loadData();
   document.getElementById('status').style.display = 'none';
@@ -1260,11 +1386,20 @@ const esc = s => { const d = document.createElement('div'); d.textContent = Stri
 // ─── Range bounds ───────────────────────────────────────────────────────────
 function getRangeBounds(range) {
   if (range === 'all') return { start: null, end: null };
+  if (range === 'custom') return { start: customDateFrom || null, end: customDateTo || null };
   const today = new Date(); const iso = d => d.toISOString().slice(0,10);
   if (range === 'today') { const t = iso(today); return { start: t, end: t }; }
   const days = range === '7d' ? 7 : range === '30d' ? 30 : 90;
   const d = new Date(); d.setDate(d.getDate() - days);
   return { start: iso(d), end: null };
+}
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p =>
+    p.classList.toggle('active', p.id === 'tab-' + tab));
 }
 
 // ─── Filter + render ────────────────────────────────────────────────────────
@@ -1373,7 +1508,7 @@ function applyFilter() {
   };
 
   document.getElementById('daily-chart-title').textContent =
-    'Daily Token Usage — ' + ({today:'Today','7d':'Last 7 Days','30d':'Last 30 Days','90d':'Last 90 Days',all:'All Time'}[selectedRange]);
+    'Daily Token Usage — ' + ({today:'Today','7d':'Last 7 Days','30d':'Last 30 Days','90d':'Last 90 Days',all:'All Time',custom:'Custom Range'}[selectedRange]);
 
   renderStats(totals);
   renderDailyChart(dailySorted);
@@ -1383,7 +1518,10 @@ function applyFilter() {
   renderDailyUserChart(dailyUserDays, userLabelList, dailyByUser);
   renderModelCostTable(byModelSorted);
   renderUserCostTable(byUserSorted);
-  renderSessionsTable(filteredSessions.slice(0, 50));
+  allFilteredSessions = filteredSessions;
+  sessionPage = 1;
+  filterAndPaginateSessions();
+  renderActiveFilters();
 }
 
 // ─── Renderers ──────────────────────────────────────────────────────────────
@@ -1440,6 +1578,16 @@ function renderDailyChart(rows) {
         y: { stacked: true, ticks: { color: '#8892a4', callback: v => fmt(v) },
              grid: { color: 'rgba(255,255,255,0.04)' } },
       },
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        const day = rows[els[0].index].day;
+        customDateFrom = day; customDateTo = day; selectedRange = 'custom';
+        document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === 'custom'));
+        const cdr = document.getElementById('custom-date-range'); if (cdr) cdr.style.display = 'flex';
+        const df = document.getElementById('date-from'); if (df) df.value = day;
+        const dt = document.getElementById('date-to'); if (dt) dt.value = day;
+        applyFilter();
+      },
     },
   });
 }
@@ -1457,7 +1605,16 @@ function renderModelChart(rows) {
                    backgroundColor: rows.map((_, i) => MODEL_COLORS[i % MODEL_COLORS.length]) }],
     },
     options: { responsive: true, maintainAspectRatio: false,
-               plugins: { legend: { position: 'right', labels: { color: '#8892a4', font: { size: 11 } } } } },
+               plugins: { legend: { position: 'right', labels: { color: '#8892a4', font: { size: 11 } } } },
+               onClick: (evt, els) => {
+                 if (!els.length) return;
+                 const model = rows[els[0].index].model;
+                 if (!selectedModels) selectedModels = new Set(rawData.all_models || []);
+                 if (selectedModels.size === 1 && selectedModels.has(model)) selectedModels = null;
+                 else selectedModels = new Set([model]);
+                 renderModelMenu(); updateModelTriggerLabel(); applyFilter();
+               },
+             },
   });
 }
 
@@ -1479,6 +1636,12 @@ function renderUserChart(rows) {
              grid: { color: 'rgba(255,255,255,0.04)' } },
         y: { ticks: { color: '#8892a4' }, grid: { color: 'rgba(255,255,255,0.04)' } },
       },
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        const label = rows[els[0].index].label;
+        const user = (rawData.users || []).find(u => u.label === label);
+        if (user) { if (selectedUser === user.id) selectUser('', ''); else selectUser(user.id, user.label); }
+      },
     },
   });
 }
@@ -1497,7 +1660,14 @@ function renderUserCostChart(rows) {
     },
     options: { responsive: true, maintainAspectRatio: false,
                plugins: { legend: { position: 'right', labels: { color: '#8892a4', font: { size: 11 } } },
-                          tooltip: { callbacks: { label: ctx => ctx.label + ': $' + ctx.parsed.toFixed(2) } } } },
+                          tooltip: { callbacks: { label: ctx => ctx.label + ': $' + ctx.parsed.toFixed(2) } } },
+               onClick: (evt, els) => {
+                 if (!els.length) return;
+                 const label = rows[els[0].index].label;
+                 const user = (rawData.users || []).find(u => u.label === label);
+                 if (user) { if (selectedUser === user.id) selectUser('', ''); else selectUser(user.id, user.label); }
+               },
+             },
   });
 }
 
@@ -1522,6 +1692,13 @@ function renderDailyUserChart(days, userLabels, dailyByUser) {
         x: { stacked: true, ticks: { color: '#8892a4' }, grid: { color: 'rgba(255,255,255,0.04)' } },
         y: { stacked: true, ticks: { color: '#8892a4', callback: v => fmt(v) },
              grid: { color: 'rgba(255,255,255,0.04)' } },
+      },
+      onClick: (evt, els) => {
+        if (!els.length) return;
+        const dsIdx = els[0].datasetIndex;
+        const label = userLabels[dsIdx];
+        const user = (rawData.users || []).find(u => u.label === label);
+        if (user) { if (selectedUser === user.id) selectUser('', ''); else selectUser(user.id, user.label); }
       },
     },
   });
@@ -2237,6 +2414,121 @@ document.addEventListener('keydown', e => {
     closeManageUsers();
   }
 });
+
+// ─── Session pagination + search ───────────────────────────────────────────
+function filterAndPaginateSessions() {
+  const q = (document.getElementById('session-search')?.value || '').toLowerCase().trim();
+  sessionSearchQuery = q;
+
+  let filtered = allFilteredSessions;
+  if (q) {
+    filtered = filtered.filter(s =>
+      (s.user_label || '').toLowerCase().includes(q) ||
+      (s.project || '').toLowerCase().includes(q) ||
+      (s.model || '').toLowerCase().includes(q) ||
+      (s.branch || '').toLowerCase().includes(q) ||
+      (s.machine_label || '').toLowerCase().includes(q) ||
+      (s.session_id || '').toLowerCase().includes(q)
+    );
+  }
+
+  const total = filtered.length;
+  const totalPages = Math.max(1, Math.ceil(total / sessionPageSize));
+  if (sessionPage > totalPages) sessionPage = totalPages;
+
+  const start = (sessionPage - 1) * sessionPageSize;
+  const pageItems = filtered.slice(start, start + sessionPageSize);
+
+  renderSessionsTable(pageItems);
+  renderPagination(total, totalPages);
+
+  const countEl = document.getElementById('session-count');
+  if (countEl) countEl.textContent = total + ' session' + (total !== 1 ? 's' : '') + ' found';
+}
+
+function changePageSize() {
+  sessionPageSize = parseInt(document.getElementById('page-size-select').value) || 50;
+  sessionPage = 1;
+  filterAndPaginateSessions();
+}
+
+function goToPage(p) {
+  sessionPage = p;
+  filterAndPaginateSessions();
+  const el = document.getElementById('tab-sessions');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderPagination(total, totalPages) {
+  const el = document.getElementById('pagination');
+  if (!el) return;
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+
+  let html = '';
+  html += '<button class="page-btn" onclick="goToPage(1)"' + (sessionPage === 1 ? ' disabled' : '') + '>&laquo;</button>';
+  html += '<button class="page-btn" onclick="goToPage(' + (sessionPage - 1) + ')"' + (sessionPage === 1 ? ' disabled' : '') + '>&lsaquo;</button>';
+
+  const pages = [];
+  const range = 2;
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === 1 || i === totalPages || (i >= sessionPage - range && i <= sessionPage + range)) {
+      pages.push(i);
+    } else if (pages.length && pages[pages.length - 1] !== '...') {
+      pages.push('...');
+    }
+  }
+  for (const p of pages) {
+    if (p === '...') {
+      html += '<span class="page-info">&hellip;</span>';
+    } else {
+      html += '<button class="page-btn' + (p === sessionPage ? ' active' : '') + '" onclick="goToPage(' + p + ')">' + p + '</button>';
+    }
+  }
+
+  html += '<button class="page-btn" onclick="goToPage(' + (sessionPage + 1) + ')"' + (sessionPage === totalPages ? ' disabled' : '') + '>&rsaquo;</button>';
+  html += '<button class="page-btn" onclick="goToPage(' + totalPages + ')"' + (sessionPage === totalPages ? ' disabled' : '') + '>&raquo;</button>';
+  html += '<span class="page-info">' + total + ' total</span>';
+  el.innerHTML = html;
+}
+
+// ─── Active filter chips ───────────────────────────────────────────────────
+function renderActiveFilters() {
+  const el = document.getElementById('active-filters');
+  if (!el) return;
+  const chips = [];
+
+  if (selectedUser && rawData) {
+    const u = rawData.users.find(x => x.id === selectedUser);
+    chips.push({ label: 'User: ' + (u ? u.label : '?'), clear: () => selectUser('', '') });
+  }
+  if (selectedMachine) {
+    chips.push({ label: 'Machine: ' + selectedMachine, clear: () => { document.getElementById('machine-select').value = ''; selectMachine(''); } });
+  }
+  if (selectedModels) {
+    const names = [...selectedModels].join(', ');
+    chips.push({ label: 'Models: ' + names, clear: () => { selectedModels = null; renderModelMenu(); updateModelTriggerLabel(); applyFilter(); } });
+  }
+  if (selectedSource !== 'all') {
+    chips.push({ label: 'Source: ' + selectedSource.toUpperCase(), clear: () => selectSource('all') });
+  }
+  if (selectedRange === 'custom' && (customDateFrom || customDateTo)) {
+    chips.push({ label: 'Dates: ' + (customDateFrom || '…') + ' → ' + (customDateTo || '…'), clear: () => {
+      selectedRange = '30d'; customDateFrom = ''; customDateTo = '';
+      document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === '30d'));
+      const cdr = document.getElementById('custom-date-range'); if (cdr) cdr.style.display = 'none';
+      applyFilter();
+    }});
+  }
+
+  if (!chips.length) { el.innerHTML = ''; return; }
+
+  el.innerHTML = chips.map(c =>
+    '<span class="filter-chip">' + esc(c.label) + '<button class="chip-remove">&times;</button></span>'
+  ).join('');
+  el.querySelectorAll('.chip-remove').forEach((btn, i) => {
+    btn.onclick = (e) => { e.stopPropagation(); chips[i].clear(); };
+  });
+}
 
 init();
 </script>
