@@ -248,13 +248,8 @@ class handler(BaseHTTPRequestHandler):
             try:
                 alias_row = (
                     sb.table("machine_aliases").select("alias")
-                    .eq("hostname", hostname.upper()).limit(1).execute()
+                    .ilike("hostname", hostname).limit(1).execute()
                 )
-                if not alias_row.data:
-                    alias_row = (
-                        sb.table("machine_aliases").select("alias")
-                        .eq("hostname", hostname).limit(1).execute()
-                    )
                 if alias_row.data:
                     sb.table("users").update(
                         {"display_name": alias_row.data[0]["alias"]}

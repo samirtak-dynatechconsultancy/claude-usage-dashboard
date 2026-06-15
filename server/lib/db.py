@@ -133,6 +133,11 @@ class QueryBuilder:
         self._params.append(val)
         return self
 
+    def ilike(self, col, val):
+        self._wheres.append(f'"{col}" ILIKE %s')
+        self._params.append(val)
+        return self
+
     def in_(self, col, vals):
         if not vals:
             # Empty IN → no matches
