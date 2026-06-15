@@ -125,19 +125,44 @@ class handler(BaseHTTPRequestHandler):
             t["session_id"] for t in all_turns if t.get("session_id")
         })
 
-        sq = sb.table("sessions").select(
+        sess_cols = (
             "id, session_uuid, user_id, machine_id, project_name, git_branch, "
             "first_timestamp, last_timestamp, model, turn_count, "
             "total_input_tokens, total_output_tokens, "
             "total_cache_read, total_cache_creation"
-        ).order("last_timestamp", desc=True)
+        )
+
         if filter_user_id:
-            if turn_session_ids:
-                sq = sq.in_("id", turn_session_ids)
+            # Fetch sessions owned by this user AND sessions containing their
+            # turns. On RDP hosts, session.user_id may differ from turn.user_id
+            # so we need both queries to avoid missing rows.
+            owned_ids = set()
+            oq = sb.table("sessions").select("id").eq("user_id", filter_user_id)
+            op = 0
+            while True:
+                chunk = oq.range(op * 1000, op * 1000 + 999).execute()
+                if not chunk.data:
+                    break
+                owned_ids.update(r["id"] for r in chunk.data)
+                if len(chunk.data) < 1000:
+                    break
+                op += 1
+
+            combined_ids = list(owned_ids | set(turn_session_ids))
+            sq = sb.table("sessions").select(sess_cols).order(
+                "last_timestamp", desc=True)
+            if combined_ids:
+                sq = sq.in_("id", combined_ids)
             else:
                 sq = sq.eq("user_id", filter_user_id)
         elif filter_machine_ids:
-            sq = sq.in_("machine_id", list(filter_machine_ids))
+            sq = sb.table("sessions").select(sess_cols).order(
+                "last_timestamp", desc=True
+            ).in_("machine_id", list(filter_machine_ids))
+        else:
+            sq = sb.table("sessions").select(sess_cols).order(
+                "last_timestamp", desc=True)
+
         all_sessions = []
         page = 0
         while True:
