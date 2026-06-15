@@ -98,6 +98,11 @@
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase;
        letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--text); }
+  th.sortable .sort-arrow { display: inline-block; width: 14px; text-align: center;
+       font-size: 10px; margin-left: 2px; opacity: 0.3; }
+  th.sortable.asc .sort-arrow, th.sortable.desc .sort-arrow { opacity: 1; color: var(--accent); }
   td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
   tr:last-child td { border-bottom: none; }
   tr.clickable { cursor: pointer; }
@@ -681,17 +686,17 @@
   <div class="table-card">
     <div class="section-title">Sessions<span class="help" data-tip="All sessions matching the current filters. Click any row to open the conversation drill-down."></span> <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view conversation</span></div>
     <table>
-      <thead><tr>
-        <th>User<span class="help" data-tip="OS username of the teammate who ran Claude Code on the source machine."></span></th>
-        <th>Machine<span class="help" data-tip="Hostname of the laptop or desktop. One teammate can have multiple machines reporting."></span></th>
+      <thead><tr id="sessions-thead">
+        <th class="sortable" data-sort="user_label" onclick="toggleSessionSort('user_label')">User<span class="sort-arrow"></span><span class="help" data-tip="OS username of the teammate who ran Claude Code on the source machine."></span></th>
+        <th class="sortable" data-sort="machine_label" onclick="toggleSessionSort('machine_label')">Machine<span class="sort-arrow"></span><span class="help" data-tip="Hostname of the laptop or desktop. One teammate can have multiple machines reporting."></span></th>
         <th>Session<span class="help" data-tip="First 8 characters of the sessionId UUID. Useful for spotting which session in the local JSONL this row corresponds to."></span></th>
-        <th>Project<span class="help" data-tip="Derived from the working directory of the Claude Code session — typically the last two path components."></span></th>
-        <th>Last Active<span class="help" data-tip="Timestamp (UTC, truncated) of the last assistant turn in this session."></span></th>
-        <th>Model<span class="help" data-tip="Primary model used in this session. When multiple models appear, priority is opus > sonnet > haiku."></span></th>
-        <th>Turns<span class="help" data-tip="Number of assistant API responses in this session."></span></th>
-        <th>Input<span class="help" data-tip="Total input tokens (prompt) across the session."></span></th>
-        <th>Output<span class="help" data-tip="Total output tokens (assistant response) across the session."></span></th>
-        <th>Est. Cost<span class="help help-right" data-tip="Cost summed per-turn (each turn priced by its own model's rate)."></span></th>
+        <th class="sortable" data-sort="project" onclick="toggleSessionSort('project')">Project<span class="sort-arrow"></span><span class="help" data-tip="Derived from the working directory of the Claude Code session — typically the last two path components."></span></th>
+        <th class="sortable desc" data-sort="last_timestamp" onclick="toggleSessionSort('last_timestamp')">Last Active<span class="sort-arrow"></span><span class="help" data-tip="Timestamp (UTC, truncated) of the last assistant turn in this session."></span></th>
+        <th class="sortable" data-sort="model" onclick="toggleSessionSort('model')">Model<span class="sort-arrow"></span><span class="help" data-tip="Primary model used in this session. When multiple models appear, priority is opus > sonnet > haiku."></span></th>
+        <th class="sortable" data-sort="turns" onclick="toggleSessionSort('turns')">Turns<span class="sort-arrow"></span><span class="help" data-tip="Number of assistant API responses in this session."></span></th>
+        <th class="sortable" data-sort="input" onclick="toggleSessionSort('input')">Input<span class="sort-arrow"></span><span class="help" data-tip="Total input tokens (prompt) across the session."></span></th>
+        <th class="sortable" data-sort="output" onclick="toggleSessionSort('output')">Output<span class="sort-arrow"></span><span class="help" data-tip="Total output tokens (assistant response) across the session."></span></th>
+        <th class="sortable" data-sort="_cost" onclick="toggleSessionSort('_cost')">Est. Cost<span class="sort-arrow"></span><span class="help help-right" data-tip="Cost summed per-turn (each turn priced by its own model's rate)."></span></th>
       </tr></thead>
       <tbody id="sessions-body"></tbody>
     </table>
@@ -803,6 +808,8 @@ let sessionPage = 1;
 let sessionPageSize = 50;
 let sessionSearchQuery = '';
 let allFilteredSessions = [];
+let sessionSortCol = 'last_timestamp';
+let sessionSortDir = 'desc';
 let customDateFrom = '';
 let customDateTo = '';
 const charts = {};
@@ -1527,6 +1534,12 @@ function applyFilter() {
   renderUserCostTable(byUserSorted);
   allFilteredSessions = filteredSessions;
   sessionPage = 1;
+  // Set initial sort arrows
+  document.querySelectorAll('#sessions-thead th.sortable').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = th.dataset.sort === sessionSortCol ? (sessionSortDir === 'asc' ? '▲' : '▼') : '▴';
+    if (th.dataset.sort === sessionSortCol) th.classList.add(sessionSortDir);
+  });
   filterAndPaginateSessions();
   renderActiveFilters();
 }
@@ -2423,6 +2436,24 @@ document.addEventListener('keydown', e => {
 });
 
 // ─── Session pagination + search ───────────────────────────────────────────
+function toggleSessionSort(col) {
+  if (sessionSortCol === col) {
+    sessionSortDir = sessionSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sessionSortCol = col;
+    sessionSortDir = (col === 'turns' || col === 'input' || col === 'output' || col === '_cost' || col === 'last_timestamp') ? 'desc' : 'asc';
+  }
+  // Update header arrows
+  document.querySelectorAll('#sessions-thead th.sortable').forEach(th => {
+    th.classList.remove('asc', 'desc');
+    if (th.dataset.sort === sessionSortCol) th.classList.add(sessionSortDir);
+    const arrow = th.querySelector('.sort-arrow');
+    if (arrow) arrow.textContent = th.dataset.sort === sessionSortCol ? (sessionSortDir === 'asc' ? '▲' : '▼') : '▴';
+  });
+  sessionPage = 1;
+  filterAndPaginateSessions();
+}
+
 function filterAndPaginateSessions() {
   const q = (document.getElementById('session-search')?.value || '').toLowerCase().trim();
   sessionSearchQuery = q;
@@ -2438,6 +2469,26 @@ function filterAndPaginateSessions() {
       (s.session_id || '').toLowerCase().includes(q)
     );
   }
+
+  // Sort
+  filtered = [...filtered].sort((a, b) => {
+    let va, vb;
+    if (sessionSortCol === '_cost') {
+      va = calcCost(a.model, a.input, a.output, a.cache_read, a.cache_creation);
+      vb = calcCost(b.model, b.input, b.output, b.cache_read, b.cache_creation);
+    } else {
+      va = a[sessionSortCol]; vb = b[sessionSortCol];
+    }
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    let cmp;
+    if (typeof va === 'number' && typeof vb === 'number') {
+      cmp = va - vb;
+    } else {
+      cmp = String(va).localeCompare(String(vb), undefined, {numeric: true, sensitivity: 'base'});
+    }
+    return sessionSortDir === 'asc' ? cmp : -cmp;
+  });
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / sessionPageSize));
