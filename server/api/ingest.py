@@ -243,6 +243,25 @@ class handler(BaseHTTPRequestHandler):
         )
         user_id = user_row.data[0]["id"]
 
+        # Auto-set display_name from machine_aliases if not already set.
+        if not user_row.data[0].get("display_name"):
+            try:
+                alias_row = (
+                    sb.table("machine_aliases").select("alias")
+                    .eq("hostname", hostname.upper()).limit(1).execute()
+                )
+                if not alias_row.data:
+                    alias_row = (
+                        sb.table("machine_aliases").select("alias")
+                        .eq("hostname", hostname).limit(1).execute()
+                    )
+                if alias_row.data:
+                    sb.table("users").update(
+                        {"display_name": alias_row.data[0]["alias"]}
+                    ).eq("id", user_id).execute()
+            except Exception:
+                pass
+
         # ── 2. Upsert machine ───────────────────────────────────────────────
         # Schema 0006 (revised): machines.user_id stays. The UNIQUE constraint
         # is now composite -- (machine_fp, user_id) -- so the same physical
