@@ -1765,7 +1765,7 @@ function renderSessionsTable(rows) {
       : '<span class="source-tag local">Local</span>';
     return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
       <td style="white-space:nowrap">${esc(s.user_label)}${multiTag}</td>
-      <td class="muted">${esc(s.machine_label)}${srcTag}</td>
+      <td class="muted" style="white-space:nowrap">${esc(s.machine_label)}${srcTag}</td>
       <td class="muted num">${esc(s.session_id)}</td>
       <td>${esc(s.project)}</td>
       <td class="muted" title="${esc(formatIST(s.last_timestamp))}">${esc(formatISTShort(s.last_timestamp) || s.last)}</td>
