@@ -689,28 +689,30 @@
     <div class="section-title">Sessions<span class="help" data-tip="All sessions matching the current filters. Click any row to open the conversation drill-down."></span> <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view conversation</span></div>
     <table>
       <colgroup>
-        <col style="width:13%">
-        <col style="width:14%">
+        <col style="width:10%">
+        <col style="width:11%">
+        <col style="width:18%">
+        <col style="width:10%">
+        <col style="width:10%">
         <col style="width:8%">
-        <col style="width:13%">
-        <col style="width:12%">
+        <col style="width:5%">
         <col style="width:8%">
-        <col style="width:6%">
-        <col style="width:9%">
-        <col style="width:9%">
         <col style="width:8%">
+        <col style="width:7%">
+        <col style="width:5%">
       </colgroup>
       <thead><tr id="sessions-thead">
         <th class="sortable" data-sort="user_label" onclick="toggleSessionSort('user_label')">User<span class="sort-arrow"></span><span class="help" data-tip="OS username of the teammate who ran Claude Code on the source machine."></span></th>
         <th class="sortable" data-sort="machine_label" onclick="toggleSessionSort('machine_label')">Machine<span class="sort-arrow"></span><span class="help" data-tip="Hostname of the laptop or desktop. One teammate can have multiple machines reporting."></span></th>
-        <th>Session<span class="help" data-tip="First 8 characters of the sessionId UUID. Useful for spotting which session in the local JSONL this row corresponds to."></span></th>
+        <th class="sortable" data-sort="title" onclick="toggleSessionSort('title')">Title<span class="sort-arrow"></span><span class="help" data-tip="AI-generated session title based on the first user message."></span></th>
         <th class="sortable" data-sort="project" onclick="toggleSessionSort('project')">Project<span class="sort-arrow"></span><span class="help" data-tip="Derived from the working directory of the Claude Code session — typically the last two path components."></span></th>
         <th class="sortable desc" data-sort="last_timestamp" onclick="toggleSessionSort('last_timestamp')">Last Active<span class="sort-arrow"></span><span class="help" data-tip="Timestamp (UTC, truncated) of the last assistant turn in this session."></span></th>
         <th class="sortable" data-sort="model" onclick="toggleSessionSort('model')">Model<span class="sort-arrow"></span><span class="help" data-tip="Primary model used in this session. When multiple models appear, priority is opus > sonnet > haiku."></span></th>
         <th class="sortable" data-sort="turns" onclick="toggleSessionSort('turns')">Turns<span class="sort-arrow"></span><span class="help" data-tip="Number of assistant API responses in this session."></span></th>
         <th class="sortable" data-sort="input" onclick="toggleSessionSort('input')">Input<span class="sort-arrow"></span><span class="help" data-tip="Total input tokens (prompt) across the session."></span></th>
         <th class="sortable" data-sort="output" onclick="toggleSessionSort('output')">Output<span class="sort-arrow"></span><span class="help" data-tip="Total output tokens (assistant response) across the session."></span></th>
-        <th class="sortable" data-sort="_cost" onclick="toggleSessionSort('_cost')">Est. Cost<span class="sort-arrow"></span><span class="help help-right" data-tip="Cost summed per-turn (each turn priced by its own model's rate)."></span></th>
+        <th class="sortable" data-sort="_cost" onclick="toggleSessionSort('_cost')">Cost<span class="sort-arrow"></span><span class="help help-right" data-tip="Cost summed per-turn (each turn priced by its own model's rate)."></span></th>
+        <th>ID<span class="help help-right" data-tip="First 8 characters of the sessionId UUID."></span></th>
       </tr></thead>
       <tbody id="sessions-body"></tbody>
     </table>
@@ -1780,14 +1782,15 @@ function renderSessionsTable(rows) {
     return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
       <td title="${esc(s.user_label)}">${esc(s.user_label)}${multiTag}</td>
       <td class="muted" title="${esc(s.machine_label)}">${esc(s.machine_label)}${srcTag}</td>
-      <td class="muted num">${esc(s.session_id)}</td>
-      <td>${esc(s.project)}</td>
+      <td title="${esc(s.title || '')}">${esc(s.title || '')}</td>
+      <td title="${esc(s.project)}">${esc(s.project)}</td>
       <td class="muted" title="${esc(formatIST(s.last_timestamp))}">${esc(formatISTShort(s.last_timestamp) || s.last)}</td>
       <td><span class="model-tag">${esc(s.model)}</span></td>
       <td class="num">${s.turns}</td>
       <td class="num">${fmt(s.input)}</td>
       <td class="num">${fmt(s.output)}</td>
       <td class="cost">${fmtCost(cost)}</td>
+      <td class="muted num" style="font-size:10px;">${esc(s.session_id)}</td>
     </tr>`;
   }).join('');
 }

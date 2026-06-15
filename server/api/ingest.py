@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from lib.auth import verify_ingest_token
 from lib.http import write_json, read_json
 from lib.supabase_client import service_client
+from lib.title_generator import generate_title
 
 
 MODEL_PRIORITY = {"opus": 3, "sonnet": 2, "haiku": 1}
@@ -441,7 +442,52 @@ class handler(BaseHTTPRequestHandler):
                     .execute()
                 )
 
-        # ── 8. Recompute session totals ─────────────────────────────────────
+        # ── 8. Generate session titles (Haiku) ─────────────────────────────
+        # For each session in this batch that has no title yet, grab the
+        # first user message and call Haiku to produce a 3-7 word title.
+        titles_generated = 0
+        if records_in:
+            # Collect the first user message per session from this batch
+            first_user_msg = {}
+            for r in records_in:
+                suuid = r.get("session_uuid")
+                if not suuid or suuid in first_user_msg:
+                    continue
+                role = r.get("type") or (r.get("message") or {}).get("role") or ""
+                if role != "user":
+                    continue
+                msg_obj = r.get("message") or {}
+                content = msg_obj.get("content")
+                if isinstance(content, str) and content.strip():
+                    first_user_msg[suuid] = content.strip()
+                elif isinstance(content, list):
+                    parts = [b.get("text", "") for b in content
+                             if isinstance(b, dict) and b.get("type") == "text"]
+                    text = "\n".join(p for p in parts if p).strip()
+                    if text:
+                        first_user_msg[suuid] = text
+
+            for suuid, text in first_user_msg.items():
+                sid = session_id_map.get(suuid)
+                if not sid:
+                    continue
+                try:
+                    existing = (
+                        sb.table("sessions").select("title")
+                        .eq("id", sid).limit(1).execute()
+                    )
+                    if existing.data and existing.data[0].get("title"):
+                        continue
+                    title, _model = generate_title(text)
+                    if title:
+                        sb.table("sessions").update(
+                            {"title": title}
+                        ).eq("id", sid).execute()
+                        titles_generated += 1
+                except Exception:
+                    pass
+
+        # ── 9. Recompute session totals ─────────────────────────────────────
         for sid in affected_sessions:
             sb.rpc("recompute_session_totals", {"target_session_id": sid}).execute()
 

@@ -129,7 +129,7 @@ class handler(BaseHTTPRequestHandler):
             "id, session_uuid, user_id, machine_id, project_name, git_branch, "
             "first_timestamp, last_timestamp, model, turn_count, "
             "total_input_tokens, total_output_tokens, "
-            "total_cache_read, total_cache_creation"
+            "total_cache_read, total_cache_creation, title"
         )
 
         if filter_user_id:
@@ -297,6 +297,7 @@ class handler(BaseHTTPRequestHandler):
                 "output":         s.get("total_output_tokens") or 0,
                 "cache_read":     s.get("total_cache_read") or 0,
                 "cache_creation": s.get("total_cache_creation") or 0,
+                "title":          s.get("title") or "",
             })
 
         write_json(self, 200, {

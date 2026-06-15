@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     total_cache_creation    BIGINT NOT NULL DEFAULT 0,
     client_machine          TEXT,
     rdp_session_id          TEXT,
+    title                   TEXT,
     ai_summary              TEXT,
     ai_summary_at           TIMESTAMPTZ,
     ai_summary_model        TEXT,
