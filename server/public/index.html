@@ -785,6 +785,14 @@
 let session = null;  // { access_token: "..." }
 let viewerRole = 'viewer';   // 'viewer' | 'admin' — set from /api/auth-check
 let rawData = null;
+// "shubham.kumbhar" → "Shubham Kumbhar", "samir_tak" → "Samir Tak"
+function formatName(s) {
+  if (!s) return s;
+  if (/[._ ]/.test(s) && !/\s[A-Z]/.test(s)) {
+    return s.split(/[._ ]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+  }
+  return s;
+}
 let selectedRange = '30d';
 let selectedUser = '';
 let selectedMachine = '';
@@ -901,6 +909,14 @@ async function loadData({showLoading = false, silent = false} = {}) {
     }
     rawData = await res.json();
     lastUpdatedAt = new Date();
+
+    // Title-case os_username-style labels ("shubham.kumbhar" → "Shubham Kumbhar")
+    for (const u of rawData.users || []) u.label = formatName(u.label);
+    for (const s of rawData.sessions || []) {
+      s.user_label = formatName(s.user_label);
+      if (s.contributors) s.contributors = s.contributors.map(formatName);
+    }
+    for (const r of rawData.daily_by_user || []) r.user_label = formatName(r.user_label);
 
     syncUserComboboxInput();
     if (!document.getElementById('user-results').hidden) {
