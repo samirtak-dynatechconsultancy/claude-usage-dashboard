@@ -96,14 +96,16 @@
   .chart-wrap.tall { height: 300px; }
 
   table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase;
+  #tab-sessions .table-card > table { table-layout: fixed; }
+  th { text-align: left; padding: 6px 8px; font-size: 11px; text-transform: uppercase;
        letter-spacing: 0.05em; color: var(--muted); border-bottom: 1px solid var(--border); }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
   th.sortable .sort-arrow { display: inline-block; width: 14px; text-align: center;
        font-size: 10px; margin-left: 2px; opacity: 0.3; }
   th.sortable.asc .sort-arrow, th.sortable.desc .sort-arrow { opacity: 1; color: var(--accent); }
-  td { padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  td { padding: 8px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  #tab-sessions td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   tr:last-child td { border-bottom: none; }
   tr.clickable { cursor: pointer; }
   tr.clickable:hover td { background: rgba(255,255,255,0.03); }
@@ -115,7 +117,7 @@
   .section-title { font-size: 13px; font-weight: 600; color: var(--muted);
                    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
   .table-card { background: var(--card); border: 1px solid var(--border);
-                border-radius: 8px; padding: 20px; margin-bottom: 24px; overflow-x: auto; }
+                border-radius: 8px; padding: 16px; margin-bottom: 24px; overflow: hidden; }
 
   /* Sign-out button */
   .signout-btn { background: transparent; border: 1px solid var(--border);
@@ -686,6 +688,18 @@
   <div class="table-card">
     <div class="section-title">Sessions<span class="help" data-tip="All sessions matching the current filters. Click any row to open the conversation drill-down."></span> <span class="muted" style="font-weight:normal; font-size:11px;">— click a row to view conversation</span></div>
     <table>
+      <colgroup>
+        <col style="width:13%">
+        <col style="width:14%">
+        <col style="width:8%">
+        <col style="width:13%">
+        <col style="width:12%">
+        <col style="width:8%">
+        <col style="width:6%">
+        <col style="width:9%">
+        <col style="width:9%">
+        <col style="width:8%">
+      </colgroup>
       <thead><tr id="sessions-thead">
         <th class="sortable" data-sort="user_label" onclick="toggleSessionSort('user_label')">User<span class="sort-arrow"></span><span class="help" data-tip="OS username of the teammate who ran Claude Code on the source machine."></span></th>
         <th class="sortable" data-sort="machine_label" onclick="toggleSessionSort('machine_label')">Machine<span class="sort-arrow"></span><span class="help" data-tip="Hostname of the laptop or desktop. One teammate can have multiple machines reporting."></span></th>
@@ -1764,8 +1778,8 @@ function renderSessionsTable(rows) {
       ? '<span class="source-tag rdp">RDP</span>'
       : '<span class="source-tag local">Local</span>';
     return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
-      <td style="white-space:nowrap">${esc(s.user_label)}${multiTag}</td>
-      <td class="muted" style="white-space:nowrap">${esc(s.machine_label)}${srcTag}</td>
+      <td title="${esc(s.user_label)}">${esc(s.user_label)}${multiTag}</td>
+      <td class="muted" title="${esc(s.machine_label)}">${esc(s.machine_label)}${srcTag}</td>
       <td class="muted num">${esc(s.session_id)}</td>
       <td>${esc(s.project)}</td>
       <td class="muted" title="${esc(formatIST(s.last_timestamp))}">${esc(formatISTShort(s.last_timestamp) || s.last)}</td>
