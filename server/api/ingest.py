@@ -244,12 +244,19 @@ class handler(BaseHTTPRequestHandler):
         user_id = user_row.data[0]["id"]
 
         # Auto-set display_name from machine_aliases if not already set.
+        # Try hostname first, then os_username (for RDP users whose
+        # username IS the client machine name, e.g. "dspl-lpt-551").
         if not user_row.data[0].get("display_name"):
             try:
                 alias_row = (
                     sb.table("machine_aliases").select("alias")
                     .ilike("hostname", hostname).limit(1).execute()
                 )
+                if not alias_row.data:
+                    alias_row = (
+                        sb.table("machine_aliases").select("alias")
+                        .ilike("hostname", os_username).limit(1).execute()
+                    )
                 if alias_row.data:
                     sb.table("users").update(
                         {"display_name": alias_row.data[0]["alias"]}
