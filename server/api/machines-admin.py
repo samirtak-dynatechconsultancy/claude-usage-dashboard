@@ -107,6 +107,25 @@ class handler(BaseHTTPRequestHandler):
                 entry["user_ids"].append(m["user_id"])
                 entry["user_labels"].append(label)
 
+        # Add alias-only rows for machine_aliases that haven't pushed data yet
+        for a in aliases:
+            h = a["hostname"]
+            if h not in by_hostname:
+                by_hostname[h] = {
+                    "ids":          [],
+                    "hostname":     h,
+                    "alias":        a.get("alias") or "",
+                    "alias_notes":  a.get("notes") or "",
+                    "machine_fp":   "",
+                    "os":           "",
+                    "is_rdp_host":  False,
+                    "user_ids":     [],
+                    "user_labels":  [],
+                    "first_seen":   None,
+                    "last_seen":    None,
+                    "alias_only":   True,
+                }
+
         rows = sorted(by_hostname.values(), key=lambda r: r["hostname"])
 
         write_json(self, 200, {

@@ -1764,7 +1764,7 @@ function renderSessionsTable(rows) {
       ? '<span class="source-tag rdp">RDP</span>'
       : '<span class="source-tag local">Local</span>';
     return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
-      <td>${esc(s.user_label)}${multiTag}</td>
+      <td style="white-space:nowrap">${esc(s.user_label)}${multiTag}</td>
       <td class="muted">${esc(s.machine_label)}${srcTag}</td>
       <td class="muted num">${esc(s.session_id)}</td>
       <td>${esc(s.project)}</td>
@@ -2292,19 +2292,27 @@ async function openManageMachines() {
 }
 
 function renderMachineRows(machines, mappings, users) {
-  // machines is already grouped by hostname from the server.
-  const tbody = machines.map(m => {
+  const active = machines.filter(m => !m.alias_only);
+  const pending = machines.filter(m => m.alias_only);
+
+  function machineRow(m) {
     const rdpBadge = m.is_rdp_host ? '<span class="rdp-badge">🖥 RDP</span>' : '';
     const usersHtml = (m.user_labels || []).map(l =>
-      `<span style="font-size:11px;">${esc(l)}</span>`
+      `<span style="font-size:11px;">${esc(formatName(l))}</span>`
     ).join(', ') || '<span class="muted" style="font-size:11px;">none</span>';
     const firstId = (m.ids || [])[0] || '';
+    const fpLine = m.machine_fp
+      ? `<div class="muted" style="font-size:10px;">fp: ${esc(m.machine_fp)} · ${esc(m.os)}</div>`
+      : '';
+    const statusBadge = m.alias_only
+      ? ' <span style="font-size:9px;padding:1px 5px;border-radius:3px;background:var(--border);color:var(--text-muted);">pending</span>'
+      : '';
 
     return `
-    <tr>
+    <tr${m.alias_only ? ' style="opacity:0.7;"' : ''}>
       <td>
-        <span style="font-family:monospace;">${esc(m.hostname)}</span>${rdpBadge}
-        <div class="muted" style="font-size:10px;">fp: ${esc(m.machine_fp)} · ${esc(m.os)}</div>
+        <span style="font-family:monospace;">${esc(m.hostname)}</span>${rdpBadge}${statusBadge}
+        ${fpLine}
       </td>
       <td>
         <input class="edit" value="${esc(m.alias || '')}"
@@ -2316,7 +2324,15 @@ function renderMachineRows(machines, mappings, users) {
       <td>${usersHtml}</td>
       <td class="muted" style="font-size:11px;">${esc(m.last_seen ? timeAgo(m.last_seen) : 'never')}</td>
     </tr>`;
-  }).join('');
+  }
+
+  const activeRows = active.map(machineRow).join('');
+  const pendingRows = pending.map(machineRow).join('');
+  const pendingSection = pending.length ? `
+    <tr><td colspan="4" style="padding:12px 8px 4px;font-weight:600;font-size:12px;color:var(--text-muted);border-bottom:1px solid var(--border);">
+      Mapped but not yet connected (${pending.length})
+    </td></tr>
+    ${pendingRows}` : '';
 
   document.getElementById('machines-content').innerHTML = `
     <table class="manage-table">
@@ -2326,7 +2342,7 @@ function renderMachineRows(machines, mappings, users) {
         <th>Mapped Users</th>
         <th>Last Seen</th>
       </tr></thead>
-      <tbody>${tbody}</tbody>
+      <tbody>${activeRows}${pendingSection}</tbody>
     </table>`;
 }
 
