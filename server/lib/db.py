@@ -138,6 +138,14 @@ class QueryBuilder:
         self._params.append(val)
         return self
 
+    def is_(self, col, val):
+        if val == "null":
+            self._wheres.append(f'"{col}" IS NULL')
+        else:
+            self._wheres.append(f'"{col}" IS %s')
+            self._params.append(val)
+        return self
+
     def in_(self, col, vals):
         if not vals:
             # Empty IN → no matches
