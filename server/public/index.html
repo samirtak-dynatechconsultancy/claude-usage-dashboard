@@ -851,6 +851,13 @@ async function init() {
     const body = await check.json();
     return showStatus(body.error || 'Not authorized', true);
   }
+  if (check.status === 401) {
+    localStorage.removeItem('dashboard_token');
+    localStorage.removeItem('dashboard_email');
+    localStorage.removeItem('dashboard_role');
+    window.location.replace('/login');
+    return;
+  }
   if (!check.ok) {
     return showStatus('Auth check failed (HTTP ' + check.status + ')', true);
   }
@@ -926,6 +933,13 @@ async function loadData({showLoading = false, silent = false} = {}) {
     if (selectedMachine) params.push('hostname=' + encodeURIComponent(selectedMachine));
     const qs = params.length ? '?' + params.join('&') : '';
     const res = await fetch('/api/data' + qs, { headers: authHeaders() });
+    if (res.status === 401) {
+      localStorage.removeItem('dashboard_token');
+      localStorage.removeItem('dashboard_email');
+      localStorage.removeItem('dashboard_role');
+      window.location.replace('/login');
+      return;
+    }
     if (!res.ok) {
       if (!silent) showStatus('Failed to load data: HTTP ' + res.status, true);
       return;
