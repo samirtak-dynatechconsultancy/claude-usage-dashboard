@@ -2512,7 +2512,14 @@ async function backfillTitles() {
       alert(data.error || 'Backfill failed');
       return;
     }
-    const msg = `Titles: ${data.generated} generated, ${data.skipped} skipped, ${data.failed} failed. ${data.remaining} still untitled.`;
+    let msg = `Titles: ${data.generated} generated, ${data.skipped} skipped, ${data.failed} failed. ${data.remaining} still untitled.`;
+    if (data.results && data.results.some(r => r.status === 'skipped')) {
+      const reasons = {};
+      data.results.filter(r => r.status === 'skipped').forEach(r => {
+        reasons[r.reason] = (reasons[r.reason] || 0) + 1;
+      });
+      msg += '\n\nSkip reasons:\n' + Object.entries(reasons).map(([r,c]) => `  ${r}: ${c}`).join('\n');
+    }
     alert(msg);
     if (data.generated > 0) loadData();
   } catch (e) {
