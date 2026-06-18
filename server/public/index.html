@@ -537,6 +537,11 @@
             title="Invite a teammate to view the dashboard">
       + Invite
     </button>
+    <button class="signout-btn admin-only" id="backfill-titles-btn"
+            onclick="backfillTitles()" hidden
+            title="Generate AI titles for sessions that don't have one">
+      Backfill Titles
+    </button>
     <span id="viewer-email" class="muted"></span>
     <button class="signout-btn" onclick="signOut()">Sign out</button>
   </div>
@@ -2481,6 +2486,37 @@ document.addEventListener('keydown', e => {
     closeManageUsers();
   }
 });
+
+// ─── Backfill titles ──────────────────────────────────────────────────────
+async function backfillTitles() {
+  const btn = document.getElementById('backfill-titles-btn');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Working...';
+  try {
+    const res = await fetch('/api/backfill-titles', {
+      method: 'POST', headers: authHeaders()
+    });
+    if (res.status === 401) {
+      localStorage.removeItem('dashboard_token');
+      window.location.replace('/login');
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Backfill failed');
+      return;
+    }
+    const msg = `Titles: ${data.generated} generated, ${data.skipped} skipped, ${data.failed} failed. ${data.remaining} still untitled.`;
+    alert(msg);
+    if (data.generated > 0) loadData();
+  } catch (e) {
+    alert('Backfill error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
 
 // ─── Session pagination + search ───────────────────────────────────────────
 function toggleSessionSort(col) {

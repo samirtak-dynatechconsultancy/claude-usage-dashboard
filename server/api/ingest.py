@@ -501,4 +501,5 @@ class handler(BaseHTTPRequestHandler):
             "turns_received":   len(turns_in),
             "messages_received": len(records_in),
             "files_recorded":   len(files_in),
+            "titles_generated": titles_generated,
         })
