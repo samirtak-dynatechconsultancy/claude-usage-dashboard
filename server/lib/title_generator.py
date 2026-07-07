@@ -16,8 +16,12 @@ User's request:
 Title:"""
 
 TITLE_MAX_TOKENS = 30
-HTTP_TIMEOUT_S = 15
+HTTP_TIMEOUT_S = 6
 DEFAULT_TITLE_MODEL = "claude-haiku-4-5-20251001"
+
+# Cache the auth style index that last succeeded so subsequent calls in the
+# same function invocation skip the 401/403 probing round-trips.
+_last_working_auth = 0
 
 
 def generate_title(first_user_message):
@@ -25,6 +29,7 @@ def generate_title(first_user_message):
 
     Returns (title_str, model_used) or (None, None) on failure.
     """
+    global _last_working_auth
     endpoint = os.environ.get("AZURE_FOUNDRY_ENDPOINT")
     api_key = os.environ.get("AZURE_FOUNDRY_API_KEY")
     model = os.environ.get("AZURE_FOUNDRY_TITLE_MODEL", DEFAULT_TITLE_MODEL)
@@ -50,7 +55,14 @@ def generate_title(first_user_message):
         {"api-key": api_key, "anthropic-version": "2023-06-01"},
         {"Authorization": f"Bearer {api_key}", "anthropic-version": "2023-06-01"},
     ]
-    for headers_auth in auth_styles:
+    # Try the last-known-good auth style first, then the rest.
+    order = list(range(len(auth_styles)))
+    if _last_working_auth:
+        order.remove(_last_working_auth)
+        order.insert(0, _last_working_auth)
+
+    for idx in order:
+        headers_auth = auth_styles[idx]
         headers = {"Content-Type": "application/json", **headers_auth}
         req = urlrequest.Request(endpoint, data=body, method="POST", headers=headers)
         try:
@@ -63,6 +75,7 @@ def generate_title(first_user_message):
                 ]
                 title = " ".join(parts).strip()
                 if title:
+                    _last_working_auth = idx
                     return title, model
         except HTTPError as e:
             if e.code in (401, 403):

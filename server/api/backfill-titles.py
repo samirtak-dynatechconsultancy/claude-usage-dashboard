@@ -80,23 +80,11 @@ class handler(BaseHTTPRequestHandler):
                 .execute()
             ).data
 
-            # Also count total messages for debugging.
-            all_msgs = (
-                sb.table("messages")
-                .select("id", count="exact")
-                .eq("session_id", sid)
-                .execute()
-            )
-            msg_count = all_msgs.count if all_msgs.count is not None else len(all_msgs.data or [])
-
             text = (msg_row[0]["text_content"] or "").strip() if msg_row else ""
             if not text:
-                reason = "no messages at all" if msg_count == 0 else (
-                    "no user-role messages" if not msg_row else
-                    "user message has empty text_content"
-                )
+                reason = "no user messages" if not msg_row else "empty text_content"
                 skipped += 1
-                results.append({"session": str(suuid)[:8], "status": "skipped", "reason": reason, "msg_count": msg_count})
+                results.append({"session": str(suuid)[:8], "status": "skipped", "reason": reason})
                 continue
 
             title, model = generate_title(text)
