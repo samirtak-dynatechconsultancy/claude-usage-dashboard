@@ -1801,7 +1801,7 @@ function renderSessionsTable(rows) {
     return `<tr class="clickable" onclick="openSession('${esc(s.session_uuid)}', '${esc(s.user_label)}', '${esc(s.project)}')">
       <td title="${esc(s.user_label)}">${esc(s.user_label)}${multiTag}</td>
       <td class="muted" title="${esc(s.machine_label)}">${esc(s.machine_label)}${srcTag}</td>
-      <td title="${esc(s.title || '')}">${esc(s.title || '')}</td>
+      <td title="${esc(s.title || s.project || '')}">${s.title ? esc(s.title) : `<span class="muted" style="font-style:italic">${esc(s.project || '')}</span>`}</td>
       <td title="${esc(s.project)}">${esc(s.project)}</td>
       <td class="muted" title="${esc(formatIST(s.last_timestamp))}">${esc(formatISTShort(s.last_timestamp) || s.last)}</td>
       <td><span class="model-tag">${esc(s.model)}</span></td>

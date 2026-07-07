@@ -446,6 +446,8 @@ class handler(BaseHTTPRequestHandler):
         # For each session in this batch that has no title yet, grab the
         # first user message and call Haiku to produce a 3-7 word title.
         titles_generated = 0
+        titles_failed = 0
+        titles_no_text = 0
         if records_in:
             # Collect the first user message per session from this batch
             first_user_msg = {}
@@ -484,8 +486,13 @@ class handler(BaseHTTPRequestHandler):
                             {"title": title}
                         ).eq("id", sid).execute()
                         titles_generated += 1
-                except Exception:
-                    pass
+                    else:
+                        titles_failed += 1
+                except Exception as exc:
+                    titles_failed += 1
+
+            if not first_user_msg:
+                titles_no_text = len(session_id_map)
 
         # ── 9. Recompute session totals ─────────────────────────────────────
         for sid in affected_sessions:
@@ -502,4 +509,6 @@ class handler(BaseHTTPRequestHandler):
             "messages_received": len(records_in),
             "files_recorded":   len(files_in),
             "titles_generated": titles_generated,
+            "titles_failed":   titles_failed,
+            "titles_no_text":  titles_no_text,
         })
