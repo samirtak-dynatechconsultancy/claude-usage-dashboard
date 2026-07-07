@@ -774,6 +774,28 @@
   </div>
 </div>
 
+<!-- Backfill titles modal (admin only) -->
+<div class="modal-backdrop" id="backfill-backdrop" onclick="closeBackfillOnBackdrop(event)">
+  <div class="modal modal-narrow" style="height:auto;max-height:80vh;">
+    <button class="close" onclick="closeBackfillModal()">&times;</button>
+    <h2>Backfill Session Titles</h2>
+    <div id="backfill-status" class="meta-row">Checking for untitled sessions...</div>
+    <div style="margin-bottom:12px;">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;height:24px;overflow:hidden;">
+        <div id="backfill-bar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s;"></div>
+      </div>
+      <div id="backfill-counts" style="display:flex;justify-content:space-between;margin-top:6px;font-size:11px;color:var(--muted);">
+        <span id="backfill-progress">0 / 0</span>
+        <span id="backfill-stats"></span>
+      </div>
+    </div>
+    <div id="backfill-log" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;font-family:monospace;max-height:250px;overflow-y:auto;white-space:pre-wrap;color:var(--muted);"></div>
+    <div style="margin-top:14px;text-align:right;">
+      <button class="signout-btn" id="backfill-close-btn" onclick="closeBackfillModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- Invite modal (admin only) -->
 <div class="modal-backdrop" id="invite-backdrop" onclick="closeInviteOnBackdrop(event)">
   <div class="modal modal-narrow">
@@ -2484,49 +2506,126 @@ document.addEventListener('keydown', e => {
     closeModal();
     closeInviteModal();
     closeManageUsers();
+    if (!_backfillRunning) closeBackfillModal();
   }
 });
 
 // ─── Backfill titles ──────────────────────────────────────────────────────
+let _backfillRunning = false;
+
+function closeBackfillModal() {
+  document.getElementById('backfill-backdrop').classList.remove('show');
+}
+function closeBackfillOnBackdrop(e) {
+  if (e.target.id === 'backfill-backdrop' && !_backfillRunning) closeBackfillModal();
+}
+
 async function backfillTitles() {
-  const btn = document.getElementById('backfill-titles-btn');
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Working...';
+  if (_backfillRunning) return;
+  _backfillRunning = true;
+
+  const backdrop = document.getElementById('backfill-backdrop');
+  const status = document.getElementById('backfill-status');
+  const bar = document.getElementById('backfill-bar');
+  const progress = document.getElementById('backfill-progress');
+  const stats = document.getElementById('backfill-stats');
+  const log = document.getElementById('backfill-log');
+  const closeBtn = document.getElementById('backfill-close-btn');
+
+  // Reset UI
+  status.textContent = 'Checking for untitled sessions...';
+  bar.style.width = '0%';
+  progress.textContent = '0 / 0';
+  stats.textContent = '';
+  log.textContent = '';
+  closeBtn.disabled = true;
+  backdrop.classList.add('show');
+
+  let generated = 0, skipped = 0, failed = 0, processed = 0, total = 0;
+
+  function addLog(line) {
+    log.textContent += line + '\n';
+    log.scrollTop = log.scrollHeight;
+  }
+
   try {
-    const res = await fetch('/api/backfill-titles', {
-      method: 'POST', headers: authHeaders()
-    });
-    if (res.status === 401) {
-      localStorage.removeItem('dashboard_token');
-      window.location.replace('/login');
-      return;
-    }
-    const text = await res.text();
-    let data;
-    try { data = JSON.parse(text); } catch {
-      alert('Server error (non-JSON): ' + text.slice(0, 200));
-      return;
-    }
-    if (!res.ok) {
-      alert(data.error || 'Backfill failed');
-      return;
-    }
-    let msg = `Titles: ${data.generated} generated, ${data.skipped} skipped, ${data.failed} failed. ${data.remaining} still untitled.`;
-    if (data.results && data.results.some(r => r.status === 'skipped')) {
-      const reasons = {};
-      data.results.filter(r => r.status === 'skipped').forEach(r => {
-        reasons[r.reason] = (reasons[r.reason] || 0) + 1;
+    // Process one at a time until no more remain
+    let hasMore = true;
+    while (hasMore) {
+      const res = await fetch('/api/backfill-titles?limit=1', {
+        method: 'POST', headers: authHeaders()
       });
-      msg += '\n\nSkip reasons:\n' + Object.entries(reasons).map(([r,c]) => `  ${r}: ${c}`).join('\n');
+      if (res.status === 401) {
+        localStorage.removeItem('dashboard_token');
+        window.location.replace('/login');
+        return;
+      }
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch {
+        addLog('ERROR: Server returned non-JSON: ' + text.slice(0, 100));
+        break;
+      }
+      if (!res.ok) {
+        addLog('ERROR: ' + (data.error || 'Unknown error'));
+        break;
+      }
+
+      // On first call, calculate total from processed + remaining
+      if (processed === 0 && data.remaining !== undefined) {
+        total = (data.processed || 0) + data.remaining;
+        if (total === 0) {
+          status.textContent = 'All sessions already have titles!';
+          addLog('Nothing to do — all sessions have titles.');
+          break;
+        }
+      }
+
+      // Process results from this batch
+      for (const r of (data.results || [])) {
+        processed++;
+        if (r.status === 'ok') {
+          generated++;
+          addLog(`✓ ${r.session} → "${r.title}"`);
+        } else if (r.status === 'skipped') {
+          skipped++;
+          addLog(`– ${r.session} skipped: ${r.reason}`);
+        } else {
+          failed++;
+          addLog(`✗ ${r.session} failed`);
+        }
+      }
+
+      // If the call processed nothing (0 results), we're done
+      if (!data.results || data.results.length === 0) {
+        if (data.remaining > 0) {
+          // All remaining have no messages
+          total = processed + data.remaining;
+          status.textContent = `Done. ${data.remaining} sessions have no messages for title generation.`;
+        }
+        hasMore = false;
+      } else {
+        hasMore = data.remaining > 0;
+      }
+
+      // Update progress
+      const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
+      bar.style.width = pct + '%';
+      progress.textContent = `${processed} / ${total}`;
+      stats.textContent = `${generated} titled, ${skipped} skipped, ${failed} failed`;
+      status.textContent = hasMore ? `Processing... ${processed} / ${total}` : 'Done!';
     }
-    alert(msg);
-    if (data.generated > 0) loadData();
+
+    if (generated > 0) loadData();
   } catch (e) {
-    alert('Backfill error: ' + e.message);
+    addLog('ERROR: ' + e.message);
+    status.textContent = 'Error occurred';
   } finally {
-    btn.disabled = false;
-    btn.textContent = orig;
+    _backfillRunning = false;
+    closeBtn.disabled = false;
+    if (!status.textContent.startsWith('Done')) {
+      status.textContent = `Finished. ${generated} titled, ${skipped} skipped, ${failed} failed.`;
+    }
   }
 }
 
