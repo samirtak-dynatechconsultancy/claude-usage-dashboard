@@ -439,6 +439,16 @@
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
+  /* ── Usage tab ─────────────────────────────────────────────── */
+  .usage-pct-bar { display: flex; align-items: center; gap: 8px; }
+  .usage-pct-track { flex: 1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .usage-pct-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+  .usage-pct-fill.low  { background: var(--green); }
+  .usage-pct-fill.mid  { background: #fbbf24; }
+  .usage-pct-fill.high { background: var(--error); }
+  .usage-pct-label { font-family: monospace; font-size: 13px; min-width: 44px; text-align: right; }
+  .usage-empty { text-align: center; padding: 40px; color: var(--muted); }
+
   /* ── Custom date range inputs ────────────────────────────── */
   .date-range-custom {
     display: flex; align-items: center; gap: 8px;
@@ -606,6 +616,7 @@
 <div class="tab-bar" id="tab-bar">
   <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">Overview</button>
   <button class="tab-btn" data-tab="sessions" onclick="switchTab('sessions')">Sessions</button>
+  <button class="tab-btn" data-tab="usage" onclick="switchTab('usage')">Usage</button>
 </div>
 
 <div class="container" id="main-container">
@@ -724,6 +735,31 @@
   </div>
   <div class="pagination" id="pagination"></div>
   </div><!-- /tab-sessions -->
+
+  <div id="tab-usage" class="tab-panel">
+    <div class="stats-row" id="usage-stats-row"></div>
+    <div class="charts-grid">
+      <div class="chart-card wide">
+        <h2>Usage Over Time</h2>
+        <div class="chart-wrap tall"><canvas id="chart-usage-timeline"></canvas></div>
+      </div>
+    </div>
+    <div class="table-card">
+      <div class="section-title">Usage Log</div>
+      <table>
+        <thead><tr>
+          <th>Captured</th>
+          <th>User</th>
+          <th>Host</th>
+          <th>5h Session</th>
+          <th>7d Weekly</th>
+          <th>5h Resets At</th>
+          <th>7d Resets At</th>
+        </tr></thead>
+        <tbody id="usage-log-body"></tbody>
+      </table>
+    </div>
+  </div><!-- /tab-usage -->
 </div>
 
 </div><!-- /#app -->
@@ -1599,6 +1635,7 @@ function applyFilter() {
   });
   filterAndPaginateSessions();
   renderActiveFilters();
+  renderUsageTab();
 }
 
 // ─── Renderers ──────────────────────────────────────────────────────────────
@@ -2780,6 +2817,114 @@ function renderActiveFilters() {
   el.querySelectorAll('.chip-remove').forEach((btn, i) => {
     btn.onclick = (e) => { e.stopPropagation(); chips[i].clear(); };
   });
+}
+
+// ─── Usage tab rendering ───────────────────────────────────────────────────
+function usagePctClass(v) { return v >= 80 ? 'high' : v >= 50 ? 'mid' : 'low'; }
+
+function renderUsageTab() {
+  const rows = (rawData && rawData.usage) || [];
+  const statsEl = document.getElementById('usage-stats-row');
+  const bodyEl  = document.getElementById('usage-log-body');
+
+  if (!rows.length) {
+    statsEl.innerHTML = '';
+    bodyEl.innerHTML = '<tr><td colspan="7" class="usage-empty">No usage data yet. Run <code>ClaudeUsageCollector.exe usage</code> to start collecting.</td></tr>';
+    if (charts.usageTimeline) { charts.usageTimeline.destroy(); charts.usageTimeline = null; }
+    return;
+  }
+
+  // Latest reading per user (email)
+  const latestByUser = {};
+  for (const r of rows) {
+    const key = r.email || r.os_user || 'unknown';
+    if (!latestByUser[key]) latestByUser[key] = r;
+  }
+  const latestList = Object.values(latestByUser);
+
+  // Stats cards: show latest readings for each user
+  statsEl.innerHTML = latestList.map(r => {
+    const label = r.email || r.os_user || '?';
+    const s5 = r.session_pct != null ? parseFloat(r.session_pct) : null;
+    const s7 = r.weekly_pct != null ? parseFloat(r.weekly_pct) : null;
+    return `
+    <div class="stat-card" style="min-width:220px">
+      <div class="label">${esc(label)}</div>
+      <div style="margin-top:8px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">5h Session</div>
+        <div class="usage-pct-bar">
+          <div class="usage-pct-track"><div class="usage-pct-fill ${s5 != null ? usagePctClass(s5) : ''}" style="width:${s5 != null ? s5 : 0}%"></div></div>
+          <span class="usage-pct-label">${s5 != null ? s5.toFixed(1) + '%' : 'n/a'}</span>
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:4px">7d Weekly</div>
+        <div class="usage-pct-bar">
+          <div class="usage-pct-track"><div class="usage-pct-fill ${s7 != null ? usagePctClass(s7) : ''}" style="width:${s7 != null ? s7 : 0}%"></div></div>
+          <span class="usage-pct-label">${s7 != null ? s7.toFixed(1) + '%' : 'n/a'}</span>
+        </div>
+      </div>
+      <div class="sub" style="margin-top:6px">${r.host || ''} &middot; ${fmtTimestamp(r.captured_at)}</div>
+    </div>`;
+  }).join('');
+
+  // Timeline chart: plot session_pct and weekly_pct over time (reversed to chronological)
+  const chronological = [...rows].reverse();
+  const labels = chronological.map(r => {
+    const d = new Date(r.captured_at);
+    return d.toLocaleDateString('en-IN', {month:'short',day:'numeric'}) + ' ' +
+           d.toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',hour12:false});
+  });
+
+  const ctx = document.getElementById('chart-usage-timeline').getContext('2d');
+  if (charts.usageTimeline) charts.usageTimeline.destroy();
+  charts.usageTimeline = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: '5h Session %', data: chronological.map(r => r.session_pct),
+          borderColor: 'rgba(79,142,247,0.9)', backgroundColor: 'rgba(79,142,247,0.1)',
+          fill: true, tension: 0.3, pointRadius: 3 },
+        { label: '7d Weekly %', data: chronological.map(r => r.weekly_pct),
+          borderColor: 'rgba(167,139,250,0.9)', backgroundColor: 'rgba(167,139,250,0.1)',
+          fill: true, tension: 0.3, pointRadius: 3 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#8892a4' } },
+                 tooltip: { callbacks: { label: c => c.dataset.label + ': ' + (c.raw != null ? parseFloat(c.raw).toFixed(1) + '%' : 'n/a') } } },
+      scales: {
+        x: { ticks: { color: '#8892a4', maxTicksLimit: 12 }, grid: { color: 'rgba(255,255,255,0.05)' } },
+        y: { min: 0, max: 100, ticks: { color: '#8892a4', callback: v => v + '%' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+      },
+    },
+  });
+
+  // Log table
+  bodyEl.innerHTML = rows.slice(0, 200).map(r => {
+    const s5 = r.session_pct != null ? parseFloat(r.session_pct) : null;
+    const s7 = r.weekly_pct != null ? parseFloat(r.weekly_pct) : null;
+    return `<tr>
+      <td>${esc(fmtTimestamp(r.captured_at))}</td>
+      <td>${esc(r.email || r.os_user || '?')}</td>
+      <td>${esc(r.host || '')}</td>
+      <td><span class="usage-pct-label" style="color:var(--${s5 != null ? (s5 >= 80 ? 'error' : s5 >= 50 ? 'accent' : 'green') : 'muted'})">${s5 != null ? s5.toFixed(1) + '%' : 'n/a'}</span></td>
+      <td><span class="usage-pct-label" style="color:var(--${s7 != null ? (s7 >= 80 ? 'error' : s7 >= 50 ? 'accent' : 'green') : 'muted'})">${s7 != null ? s7.toFixed(1) + '%' : 'n/a'}</span></td>
+      <td class="muted">${r.five_hour_resets_at ? fmtTimestamp(r.five_hour_resets_at) : ''}</td>
+      <td class="muted">${r.seven_day_resets_at ? fmtTimestamp(r.seven_day_resets_at) : ''}</td>
+    </tr>`;
+  }).join('');
+}
+
+function fmtTimestamp(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false });
+  } catch { return String(iso).slice(0, 16); }
 }
 
 init();

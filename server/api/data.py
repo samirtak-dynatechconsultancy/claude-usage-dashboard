@@ -300,8 +300,37 @@ class handler(BaseHTTPRequestHandler):
                 "title":          s.get("title") or "",
             })
 
+        # ── Claude Desktop usage data ──────────────────────────────────────
+        usage_rows = []
+        try:
+            uq = sb.table("claude_usage_pr").select(
+                "id, captured_at, email, org_id, session_pct, weekly_pct, "
+                "five_hour_resets_at, seven_day_resets_at, host, os_user"
+            ).order("captured_at", desc=True)
+            page = 0
+            while True:
+                chunk = uq.range(page * 1000, page * 1000 + 999).execute()
+                if not chunk.data:
+                    break
+                usage_rows.extend(chunk.data)
+                if len(chunk.data) < 1000:
+                    break
+                page += 1
+        except Exception:
+            pass
+
         write_json(self, 200, {
             "viewer": {"email": email, "role": role},
+            "usage": [{
+                "captured_at":         r.get("captured_at"),
+                "email":               r.get("email"),
+                "session_pct":         r.get("session_pct"),
+                "weekly_pct":          r.get("weekly_pct"),
+                "five_hour_resets_at": r.get("five_hour_resets_at"),
+                "seven_day_resets_at": r.get("seven_day_resets_at"),
+                "host":                r.get("host"),
+                "os_user":             r.get("os_user"),
+            } for r in usage_rows],
             "users": [{
                 "id": u["id"],
                 "label": u.get("display_name") or u.get("os_username"),
