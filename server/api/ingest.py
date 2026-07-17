@@ -147,12 +147,29 @@ def parse_message_content(content):
     }
 
 
+USAGE_TABLE = "claude_usage_pr"
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             return self._handle()
         except Exception as exc:
             return write_json(self, 500, {"error": f"Server error: {exc}"})
+
+    def _handle_usage(self, body):
+        sb = service_client()
+        sb.table(USAGE_TABLE).insert({
+            "email":                body.get("email"),
+            "org_id":               body.get("org_id"),
+            "session_pct":          body.get("session_pct"),
+            "weekly_pct":           body.get("weekly_pct"),
+            "five_hour_resets_at":  body.get("five_hour_resets_at"),
+            "seven_day_resets_at":  body.get("seven_day_resets_at"),
+            "host":                 body.get("host"),
+            "os_user":              body.get("os_user"),
+        }).execute()
+        return write_json(self, 200, {"ok": True})
 
     def _handle(self):
         if not verify_ingest_token(self.headers.get("X-Ingest-Token")):
@@ -161,6 +178,13 @@ class handler(BaseHTTPRequestHandler):
         body, err = read_json(self, max_bytes=5 * 1024 * 1024)  # bumped from 4 MB
         if err:
             return write_json(self, err[0], err[1])
+
+        # ── Usage-data shortcut ────────────────────────────────────────────
+        # The collector's `usage` subcommand sends a flat object with
+        # session_pct/weekly_pct. Route it to claude_usage_pr and return
+        # early — no need for the full turns/sessions pipeline.
+        if "session_pct" in body:
+            return self._handle_usage(body)
 
         # Strip null bytes from every string in the parsed payload before any
         # DB call. Postgres rejects U+0000 in TEXT and JSONB columns; a
