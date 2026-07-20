@@ -177,6 +177,17 @@ class QueryBuilder:
         self._upsert_ignore = ignore_duplicates
         return self
 
+    def insert(self, data):
+        # supabase-py parity: a plain INSERT. Reuse the upsert path with no
+        # conflict target -- _exec_upsert then renders INSERT ... RETURNING *.
+        # (Was missing after the Supabase->Azure migration; the only caller is
+        # ingest.py's usage path, so Desktop usage silently 500'd.)
+        self._mode = "upsert"
+        self._upsert_data = data if isinstance(data, list) else [data]
+        self._upsert_conflict = None
+        self._upsert_ignore = False
+        return self
+
     def update(self, data):
         self._mode = "update"
         self._update_data = data
