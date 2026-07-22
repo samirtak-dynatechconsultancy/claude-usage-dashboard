@@ -1620,6 +1620,7 @@ async function loadTeamActivity() {
   const errEl = document.getElementById('team-error');
   errEl.style.display = 'none';
   const params = new URLSearchParams({
+    view: 'team-activity',
     page: teamState.page,
     page_size: teamPageSize(),
     sort: document.getElementById('team-sort').value,
@@ -1628,7 +1629,7 @@ async function loadTeamActivity() {
   });
   let data;
   try {
-    const res = await fetch('/api/team-activity?' + params.toString(),
+    const res = await fetch('/api/data?' + params.toString(),
                             { headers: authHeaders() });
     data = await res.json();
   } catch (e) {

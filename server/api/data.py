@@ -8,10 +8,16 @@ additions:
 Auth: Authorization: Bearer <Supabase JWT>. Email must be on dashboard_users.
 """
 
+import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
+from urllib import request as urlrequest
+from urllib.error import HTTPError, URLError
+
+_CLAUDE_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -50,12 +56,75 @@ class handler(BaseHTTPRequestHandler):
         except Exception as exc:
             return write_json(self, 500, {"error": f"Server error: {exc}"})
 
+    def _team_activity(self, qs):
+        """Proxy claude.ai's per-user admin analytics. The browser can't call
+        claude.ai directly (cross-origin + httpOnly cookie), so the server does,
+        using an admin session key from env (or an X-Claude-* header override)."""
+        session_key = (self.headers.get("X-Claude-Session-Key")
+                       or os.environ.get("CLAUDE_SESSION_KEY", "")).strip()
+        org = (self.headers.get("X-Claude-Org")
+               or (qs.get("org") or [""])[0]
+               or os.environ.get("CLAUDE_ANALYTICS_ORG", "")).strip()
+        if not session_key or not org:
+            return write_json(self, 200, {
+                "error": "Team Activity is not configured",
+                "detail": "Set CLAUDE_SESSION_KEY (an org-admin claude.ai "
+                          "sessionKey) and CLAUDE_ANALYTICS_ORG (org UUID) in "
+                          "the Vercel environment, then redeploy.",
+            })
+
+        def first(k, d):
+            v = qs.get(k)
+            return v[0] if v else d
+
+        params = {"page": first("page", "1"), "page_size": first("page_size", "50"),
+                  "sort": first("sort", "chats"), "order": first("order", "desc")}
+        start_date = first("start_date", "")
+        if start_date:
+            params["start_date"] = start_date
+
+        url = (f"https://claude.ai/api/organizations/{org}"
+               f"/analytics/activity/users?{urlencode(params)}")
+        req = urlrequest.Request(url, headers={
+            "Cookie": f"sessionKey={session_key}",
+            "User-Agent": _CLAUDE_UA, "Accept": "application/json"})
+        try:
+            with urlrequest.urlopen(req, timeout=25) as resp:
+                data = json.loads(resp.read())
+        except HTTPError as e:
+            try:
+                detail = e.read().decode(errors="replace")[:500]
+            except Exception:
+                detail = ""
+            hint = ("The session key likely expired -- refresh CLAUDE_SESSION_KEY."
+                    if e.code in (401, 403) else "")
+            return write_json(self, 200, {
+                "error": f"claude.ai returned HTTP {e.code}",
+                "detail": detail, "hint": hint})
+        except URLError as e:
+            return write_json(self, 200, {"error": f"Network error: {e.reason}"})
+        except Exception as e:
+            return write_json(self, 200, {"error": str(e)})
+
+        members = data.get("members", []) if isinstance(data, dict) else []
+        return write_json(self, 200, {
+            "members": members, "page": int(params["page"]),
+            "page_size": int(params["page_size"]),
+            "start_date": start_date, "count": len(members)})
+
     def _handle(self):
         ok, email, role = verify_dashboard_user(self.headers.get("Authorization"))
         if not ok:
             return write_json(self, 401, {"error": "not authorized"})
 
         qs = parse_qs(urlparse(self.path).query)
+
+        # Team Activity page: proxy claude.ai admin analytics. Folded in here
+        # (instead of its own /api/team-activity.py) to stay under Vercel's
+        # 12-function Hobby limit.
+        if (qs.get("view") or [""])[0] == "team-activity":
+            return self._team_activity(qs)
+
         filter_user_id = (qs.get("user_id") or [None])[0]
         filter_hostname = (qs.get("hostname") or [None])[0]
 
