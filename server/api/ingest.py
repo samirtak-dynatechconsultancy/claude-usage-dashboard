@@ -150,12 +150,128 @@ def parse_message_content(content):
 USAGE_TABLE = "claude_usage_pr"
 
 
+def _as_int(v):
+    """Coerce a metric to int; None/blank/garbage -> None (keep the column NULL
+    rather than 0, so 'no data' is distinguishable from a real zero)."""
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _member_user_key(member, idx):
+    """Stable per-user key within an org, preferred email -> name -> hash.
+
+    Must be consistent across days so the same person's daily rows share a
+    user_key (lets the dashboard build per-person trends)."""
+    email = (member.get("email") or "").strip().lower()
+    if email:
+        return email
+    name = (member.get("name") or "").strip().lower()
+    if name:
+        return f"name:{name}"
+    for k in ("id", "user_id", "uuid", "account_uuid"):
+        v = member.get(k)
+        if v:
+            return f"{k}:{v}"
+    # Last resort: hash the member so at least it's deterministic for this push.
+    import hashlib
+    digest = hashlib.sha256(
+        json.dumps(member, sort_keys=True, default=str).encode()
+    ).hexdigest()[:16]
+    return f"anon:{digest}"
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             return self._handle()
         except Exception as exc:
             return write_json(self, 500, {"error": f"Server error: {exc}"})
+
+    def _handle_team_activity(self, body):
+        """Store a DAILY claude.ai admin-analytics snapshot for one org, expanded
+        into one row per user (pushed by the collector running on an admin's
+        machine). See migration 0012.
+
+        Body: {"kind":"team_activity", "org", "org_name", "snapshot_date",
+               "ok", "error", "members":[...]}.
+
+        On success (ok=true): upsert every member into team_activity_daily keyed
+        by (org, snapshot_date, user_key) so a re-run the same day overwrites.
+        Always update team_activity_org with the cookie/collection health so the
+        dashboard can flag an expired cookie (ok=false) without wiping the last
+        good day's data.
+        """
+        sb = service_client()
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        org = (body.get("org") or "").strip()
+        if not org:
+            return write_json(self, 400, {"error": "org is required"})
+        org_name = body.get("org_name")
+        snapshot_date = (body.get("snapshot_date") or now_iso[:10]).strip()
+        ok = bool(body.get("ok", True))
+        error = body.get("error")
+        members = body.get("members") or []
+
+        inserted = 0
+        if ok and members:
+            rows = []
+            seen_keys = set()
+            for idx, m in enumerate(members):
+                if not isinstance(m, dict):
+                    continue
+                key = _member_user_key(m, idx)
+                # Guard against duplicate keys within one push (unique constraint).
+                if key in seen_keys:
+                    key = f"{key}#{idx}"
+                seen_keys.add(key)
+                rows.append({
+                    "org":                        org,
+                    "org_name":                   org_name,
+                    "snapshot_date":              snapshot_date,
+                    "captured_at":                now_iso,
+                    "user_key":                   key,
+                    "name":                       m.get("name"),
+                    "email":                      m.get("email"),
+                    "role":                       m.get("role"),
+                    "chat_count":                 _as_int(m.get("chat_count")),
+                    "message_count":              _as_int(m.get("message_count")),
+                    "projects_created_count":     _as_int(m.get("projects_created_count")),
+                    "projects_used_count":        _as_int(m.get("projects_used_count")),
+                    "code_session_count":         _as_int(m.get("code_session_count")),
+                    "days_active":                _as_int(m.get("days_active")),
+                    "estimated_spend_us_dollars": m.get("estimated_spend_us_dollars"),
+                    "last_active":                m.get("last_active"),
+                    "member":                     m,
+                })
+            if rows:
+                sb.table("team_activity_daily").upsert(
+                    rows, on_conflict="org,snapshot_date,user_key"
+                ).execute()
+                inserted = len(rows)
+
+        status = {
+            "org":             org,
+            "org_name":        org_name,
+            "last_attempt_at": now_iso,
+            "ok":              ok,
+            "error":           error,
+        }
+        if ok:
+            status["last_success_at"] = now_iso
+            status["member_count"] = len(members)
+        sb.table("team_activity_org").upsert(
+            status, on_conflict="org"
+        ).execute()
+
+        return write_json(self, 200, {
+            "ok": True, "org": org, "snapshot_date": snapshot_date,
+            "rows_upserted": inserted, "cookie_ok": ok,
+        })
 
     def _handle_usage(self, body):
         sb = service_client()
@@ -178,6 +294,13 @@ class handler(BaseHTTPRequestHandler):
         body, err = read_json(self, max_bytes=5 * 1024 * 1024)  # bumped from 4 MB
         if err:
             return write_json(self, err[0], err[1])
+
+        # ── Team-activity shortcut ─────────────────────────────────────────
+        # The collector's `team-activity` subcommand sends {"kind":"team_activity"}
+        # with a members array (or ok=false on cookie failure). Route it to the
+        # team_activity_* tables and return early.
+        if body.get("kind") == "team_activity":
+            return self._handle_team_activity(body)
 
         # ── Usage-data shortcut ────────────────────────────────────────────
         # The collector's `usage` subcommand sends a flat object with

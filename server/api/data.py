@@ -35,6 +35,16 @@ def _iso_day(ts) -> str:
     return str(ts)[:10]
 
 
+def _iso_str(ts) -> str:
+    """Full ISO timestamp for a datetime/str (or "" if empty). Used for the
+    team-activity cookie-health timestamps sent to the client."""
+    if not ts:
+        return ""
+    if hasattr(ts, "isoformat"):
+        return ts.isoformat()
+    return str(ts)
+
+
 def _iso_hour(ts) -> int:
     if not ts:
         return 0
@@ -57,60 +67,128 @@ class handler(BaseHTTPRequestHandler):
             return write_json(self, 500, {"error": f"Server error: {exc}"})
 
     def _team_activity(self, qs):
-        """Proxy claude.ai's per-user admin analytics. The browser can't call
-        claude.ai directly (cross-origin + httpOnly cookie), so the server does,
-        using an admin session key from env (or an X-Claude-* header override)."""
-        session_key = (self.headers.get("X-Claude-Session-Key")
-                       or os.environ.get("CLAUDE_SESSION_KEY", "")).strip()
-        org = (self.headers.get("X-Claude-Org")
-               or (qs.get("org") or [""])[0]
-               or os.environ.get("CLAUDE_ANALYTICS_ORG", "")).strip()
-        if not session_key or not org:
-            return write_json(self, 200, {
-                "error": "Team Activity is not configured",
-                "detail": "Set CLAUDE_SESSION_KEY (an org-admin claude.ai "
-                          "sessionKey) and CLAUDE_ANALYTICS_ORG (org UUID) in "
-                          "the Vercel environment, then redeploy.",
-            })
+        """Serve per-user team activity from the DB.
 
+        The collector (running daily on an admin's machine, where a valid
+        claude.ai Cookie header lives) fetches /analytics/activity/users per org
+        and pushes it to team_activity_daily via /api/ingest. The dashboard
+        reads it here — no live claude.ai call (Cloudflare blocks Vercel's IP).
+
+        Query params:
+          org   — org UUID to show (default: org with the most recent success)
+          date  — snapshot_date YYYY-MM-DD (default: latest date for that org)
+          sort  — chats|messages|days_active|spend  (default chats)
+          order — asc|desc                          (default desc)
+          page, page_size — client-side pager parity
+        """
         def first(k, d):
             v = qs.get(k)
             return v[0] if v else d
 
-        params = {"page": first("page", "1"), "page_size": first("page_size", "50"),
-                  "sort": first("sort", "chats"), "order": first("order", "desc")}
-        start_date = first("start_date", "")
-        if start_date:
-            params["start_date"] = start_date
+        sb = service_client()
 
-        url = (f"https://claude.ai/api/organizations/{org}"
-               f"/analytics/activity/users?{urlencode(params)}")
-        req = urlrequest.Request(url, headers={
-            "Cookie": f"sessionKey={session_key}",
-            "User-Agent": _CLAUDE_UA, "Accept": "application/json"})
-        try:
-            with urlrequest.urlopen(req, timeout=25) as resp:
-                data = json.loads(resp.read())
-        except HTTPError as e:
-            try:
-                detail = e.read().decode(errors="replace")[:500]
-            except Exception:
-                detail = ""
-            hint = ("The session key likely expired -- refresh CLAUDE_SESSION_KEY."
-                    if e.code in (401, 403) else "")
+        # ── Orgs (dropdown + cookie health) ─────────────────────────────────
+        orgs_raw = (sb.table("team_activity_org")
+                    .select("org, org_name, ok, error, last_success_at, "
+                            "last_attempt_at, member_count")
+                    .order("org_name").execute().data) or []
+        orgs = [{
+            "org":             o.get("org"),
+            "org_name":        o.get("org_name") or o.get("org"),
+            "ok":              o.get("ok"),
+            "error":           o.get("error"),
+            "last_success_at": _iso_str(o.get("last_success_at")),
+            "last_attempt_at": _iso_str(o.get("last_attempt_at")),
+            "member_count":    o.get("member_count"),
+        } for o in orgs_raw]
+
+        if not orgs:
             return write_json(self, 200, {
-                "error": f"claude.ai returned HTTP {e.code}",
-                "detail": detail, "hint": hint})
-        except URLError as e:
-            return write_json(self, 200, {"error": f"Network error: {e.reason}"})
-        except Exception as e:
-            return write_json(self, 200, {"error": str(e)})
+                "orgs": [], "members": [], "dates": [],
+                "error": "No team activity collected yet",
+                "detail": "Configure analytics_orgs (org + full Cookie header) "
+                          "in the collector's config.json and let the daily "
+                          "ClaudeTeamActivityDaily task run once — or run "
+                          "`ClaudeUsageCollector.exe team-activity` manually.",
+            })
 
-        members = data.get("members", []) if isinstance(data, dict) else []
+        # Selected org: requested, else the most recently successful one.
+        requested_org = (first("org", "") or "").strip()
+        valid_orgs = {o["org"] for o in orgs}
+        if requested_org in valid_orgs:
+            org = requested_org
+        else:
+            org = max(orgs, key=lambda o: o.get("last_success_at") or "")["org"]
+
+        status = next((o for o in orgs if o["org"] == org), None)
+
+        # ── Dates available for this org (dropdown) ─────────────────────────
+        date_rows = (sb.table("team_activity_daily")
+                     .select("snapshot_date")
+                     .eq("org", org)
+                     .order("snapshot_date", desc=True).execute().data) or []
+        dates = []
+        for r in date_rows:
+            d = _iso_day(r.get("snapshot_date"))
+            if d and d not in dates:
+                dates.append(d)
+
+        selected_date = (first("date", "") or "").strip()
+        if selected_date not in dates:
+            selected_date = dates[0] if dates else ""
+
+        # ── Members for org + date ──────────────────────────────────────────
+        members = []
+        if selected_date:
+            rows = (sb.table("team_activity_daily")
+                    .select("member, name, email, role, chat_count, "
+                            "message_count, projects_created_count, "
+                            "projects_used_count, code_session_count, "
+                            "days_active, estimated_spend_us_dollars, last_active")
+                    .eq("org", org)
+                    .eq("snapshot_date", selected_date).execute().data) or []
+            for r in rows:
+                # `member` is the raw claude.ai object (has every field the UI
+                # renders). Fall back to the flat columns if it's somehow empty.
+                m = r.get("member")
+                if not isinstance(m, dict) or not m:
+                    m = {k: r.get(k) for k in (
+                        "name", "email", "role", "chat_count", "message_count",
+                        "projects_created_count", "projects_used_count",
+                        "code_session_count", "days_active",
+                        "estimated_spend_us_dollars", "last_active")}
+                members.append(m)
+
+        # ── Sort + paginate (parity with the old proxy contract) ────────────
+        sort_key = {
+            "chats": "chat_count", "messages": "message_count",
+            "days_active": "days_active", "spend": "estimated_spend_us_dollars",
+        }.get(first("sort", "chats"), "chat_count")
+        reverse = first("order", "desc") != "asc"
+        members.sort(key=lambda m: (m.get(sort_key) or 0), reverse=reverse)
+
+        total = len(members)
+        try:
+            page = max(1, int(first("page", "1")))
+            page_size = max(1, int(first("page_size", "50")))
+        except ValueError:
+            page, page_size = 1, 50
+        start = (page - 1) * page_size
+        page_members = members[start:start + page_size]
+
         return write_json(self, 200, {
-            "members": members, "page": int(params["page"]),
-            "page_size": int(params["page_size"]),
-            "start_date": start_date, "count": len(members)})
+            "orgs":       orgs,
+            "org":        org,
+            "org_name":   status.get("org_name") if status else org,
+            "status":     status,
+            "dates":      dates,
+            "date":       selected_date,
+            "members":    page_members,
+            "page":       page,
+            "page_size":  page_size,
+            "count":      len(page_members),
+            "total":      total,
+        })
 
     def _handle(self):
         ok, email, role = verify_dashboard_user(self.headers.get("Authorization"))

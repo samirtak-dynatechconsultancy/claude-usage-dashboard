@@ -765,12 +765,19 @@
   <div id="tab-team" class="tab-panel">
     <div class="controls-row" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;">
       <div>
-        <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Since (start date)</label>
-        <input type="date" id="team-start-date" class="filter-input" style="padding:7px 10px;">
+        <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Organization</label>
+        <select id="team-org" class="filter-input" style="padding:7px 10px;min-width:220px;"
+                onchange="teamState.page=1;teamOnOrgChange()"></select>
+      </div>
+      <div>
+        <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Date</label>
+        <select id="team-date" class="filter-input" style="padding:7px 10px;"
+                onchange="teamState.page=1;loadTeamActivity()"></select>
       </div>
       <div>
         <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Sort by</label>
-        <select id="team-sort" class="filter-input" style="padding:7px 10px;">
+        <select id="team-sort" class="filter-input" style="padding:7px 10px;"
+                onchange="teamState.page=1;loadTeamActivity()">
           <option value="chats">Chats</option>
           <option value="messages">Messages</option>
           <option value="days_active">Days active</option>
@@ -779,12 +786,16 @@
       </div>
       <div>
         <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Page size</label>
-        <select id="team-page-size" class="filter-input" style="padding:7px 10px;">
+        <select id="team-page-size" class="filter-input" style="padding:7px 10px;"
+                onchange="teamState.page=1;loadTeamActivity()">
           <option>25</option><option selected>50</option><option>100</option>
         </select>
       </div>
-      <button class="ai-btn" onclick="teamState.page=1;loadTeamActivity()">Apply</button>
+      <button class="ai-btn" onclick="teamState.page=1;loadTeamActivity()">Refresh</button>
     </div>
+
+    <!-- Cookie-expired / stale-collection banner (per selected org). -->
+    <div id="team-cookie-warn" style="display:none;background:rgba(234,179,8,.12);border:1px solid #eab308;color:#a16207;border-radius:8px;padding:12px 14px;margin-bottom:16px;white-space:pre-wrap;"></div>
 
     <div id="team-error" style="display:none;background:rgba(220,38,38,.12);border:1px solid var(--error);color:var(--error);border-radius:8px;padding:12px 14px;margin-bottom:16px;white-space:pre-wrap;"></div>
 
@@ -1585,18 +1596,13 @@ function switchTab(tab) {
   if (tab === 'team' && !teamState.loaded) { teamInit(); }
 }
 
-// ─── Team Activity (claude.ai admin analytics) ──────────────────────────────
-const teamState = { page: 1, loaded: false, lastCount: 0 };
+// ─── Team Activity (daily claude.ai admin analytics, from the DB) ────────────
+// The collector pushes one row per user per org per day. This tab lets you
+// pick an organization + a date, and flags an org whose Cookie looks expired.
+const teamState = { page: 1, loaded: false, lastCount: 0,
+                    orgs: [], selectedOrg: '', selectedDate: '' };
 
-function teamInit() {
-  // Default start date = 30 days ago (only set once).
-  const d = document.getElementById('team-start-date');
-  if (d && !d.value) {
-    const dt = new Date(Date.now() - 30 * 864e5);
-    d.value = dt.toISOString().slice(0, 10);
-  }
-  loadTeamActivity();
-}
+function teamInit() { loadTeamActivity(); }
 
 function teamPage(delta) {
   const next = teamState.page + delta;
@@ -1616,6 +1622,59 @@ function teamShowError(msg) {
   e.textContent = msg;
 }
 
+// Org dropdown changed → date list belongs to the new org, so reset the date
+// (server picks the latest for that org when we send an empty date).
+function teamOnOrgChange() {
+  teamState.selectedOrg = document.getElementById('team-org').value;
+  teamState.selectedDate = '';
+  loadTeamActivity();
+}
+
+// Populate the org dropdown, tagging any org with a bad/stale cookie.
+function renderTeamOrgs(orgs, selectedOrg) {
+  const sel = document.getElementById('team-org');
+  sel.innerHTML = orgs.map(o => {
+    const flag = o.ok === false ? ' ⚠ cookie expired'
+               : (isStale(o.last_success_at) ? ' ⚠ stale' : '');
+    return `<option value="${teamEsc(o.org)}"${o.org === selectedOrg ? ' selected' : ''}>` +
+           `${teamEsc(o.org_name)}${flag}</option>`;
+  }).join('');
+}
+
+function renderTeamDates(dates, selectedDate) {
+  const sel = document.getElementById('team-date');
+  if (!dates.length) { sel.innerHTML = '<option value="">(no data)</option>'; return; }
+  sel.innerHTML = dates.map(d =>
+    `<option value="${d}"${d === selectedDate ? ' selected' : ''}>${d}</option>`).join('');
+}
+
+// A collection is "stale" if the last success was more than ~2 days ago
+// (the task runs daily, so >2 days means it hasn't landed lately).
+function isStale(iso) {
+  if (!iso) return true;
+  const t = Date.parse(iso);
+  if (isNaN(t)) return false;
+  return (Date.now() - t) > 2 * 864e5;
+}
+
+function renderTeamCookieBanner(status) {
+  const el = document.getElementById('team-cookie-warn');
+  if (!status) { el.style.display = 'none'; return; }
+  let msg = '';
+  if (status.ok === false) {
+    msg = `Cookie for "${status.org_name}" looks expired or blocked` +
+          (status.error ? ' — ' + status.error : '') + '.\n' +
+          'Last successful collection: ' + (status.last_success_at || 'never') + '.\n' +
+          'Update this org\'s Cookie in the collector config.json, then re-run.';
+  } else if (isStale(status.last_success_at)) {
+    msg = `No fresh data for "${status.org_name}" — last successful collection ` +
+          (status.last_success_at || 'never') + '.\n' +
+          'Check that the daily ClaudeTeamActivityDaily task is running on the collector machine.';
+  }
+  if (msg) { el.textContent = msg; el.style.display = 'block'; }
+  else { el.style.display = 'none'; }
+}
+
 async function loadTeamActivity() {
   const errEl = document.getElementById('team-error');
   errEl.style.display = 'none';
@@ -1625,7 +1684,8 @@ async function loadTeamActivity() {
     page_size: teamPageSize(),
     sort: document.getElementById('team-sort').value,
     order: 'desc',
-    start_date: document.getElementById('team-start-date').value || '',
+    org: teamState.selectedOrg || '',
+    date: teamState.selectedDate || '',
   });
   let data;
   try {
@@ -1639,11 +1699,21 @@ async function loadTeamActivity() {
   if (data.error) {
     teamShowError(data.error + (data.detail ? '\n\n' + data.detail : '')
                   + (data.hint ? '\n\n' + data.hint : ''));
+    document.getElementById('team-org').innerHTML = '';
+    document.getElementById('team-date').innerHTML = '';
+    document.getElementById('team-cookie-warn').style.display = 'none';
     document.getElementById('team-table-body').innerHTML = '';
     document.getElementById('team-stats-row').innerHTML = '';
     return;
   }
   teamState.loaded = true;
+  teamState.orgs = data.orgs || [];
+  teamState.selectedOrg = data.org || '';
+  teamState.selectedDate = data.date || '';
+  renderTeamOrgs(teamState.orgs, teamState.selectedOrg);
+  renderTeamDates(data.dates || [], teamState.selectedDate);
+  renderTeamCookieBanner(data.status);
+
   const members = data.members || [];
   teamState.lastCount = members.length;
   renderTeamStats(members);
@@ -1651,10 +1721,10 @@ async function loadTeamActivity() {
   renderTeamCharts(members);
   document.getElementById('team-page-label').textContent = 'Page ' + teamState.page;
   document.getElementById('team-prev').disabled = teamState.page <= 1;
-  document.getElementById('team-next').disabled = members.length < teamPageSize();
-  const sd = data.start_date || document.getElementById('team-start-date').value;
+  document.getElementById('team-next').disabled = (teamState.page * teamPageSize()) >= (data.total || 0);
+  const total = data.total != null ? data.total : members.length;
   document.getElementById('team-range-label').textContent =
-    (sd ? 'since ' + sd : '') + ' · ' + members.length + ' shown';
+    (teamState.selectedDate ? teamState.selectedDate : '') + ' · ' + total + ' users';
 }
 
 function teamEsc(s) {

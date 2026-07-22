@@ -201,3 +201,44 @@ create table if not exists public.claude_usage_pr (
     host                text,
     os_user             text
 );
+
+-- ── Team Activity (daily, per-user) ─────────────────────────────────────────
+-- claude.ai admin analytics collected DAILY on an admin's machine and pushed
+-- via /api/ingest {"kind":"team_activity"}. See migration 0012 + ingest.py
+-- _handle_team_activity. team_activity_org powers the dashboard org dropdown and
+-- the "cookie expired" flag; team_activity_daily holds per-user daily rows.
+create table if not exists public.team_activity_daily (
+    id            bigint generated always as identity primary key,
+    org           text not null,
+    org_name      text,
+    snapshot_date date not null,
+    captured_at   timestamptz not null default now(),
+    user_key      text not null,
+    name          text,
+    email         text,
+    role          text,
+    chat_count                 integer,
+    message_count              integer,
+    projects_created_count     integer,
+    projects_used_count        integer,
+    code_session_count         integer,
+    days_active                integer,
+    estimated_spend_us_dollars numeric,
+    last_active                text,
+    member        jsonb not null default '{}'::jsonb,
+    unique (org, snapshot_date, user_key)
+);
+create index if not exists team_activity_daily_org_date_idx
+    on public.team_activity_daily (org, snapshot_date desc);
+create index if not exists team_activity_daily_date_idx
+    on public.team_activity_daily (snapshot_date desc);
+
+create table if not exists public.team_activity_org (
+    org             text primary key,
+    org_name        text,
+    last_attempt_at timestamptz,
+    last_success_at timestamptz,
+    ok              boolean not null default true,
+    error           text,
+    member_count    integer
+);
