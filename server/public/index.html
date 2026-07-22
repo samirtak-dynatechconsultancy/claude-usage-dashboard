@@ -617,6 +617,7 @@
   <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">Overview</button>
   <button class="tab-btn" data-tab="sessions" onclick="switchTab('sessions')">Sessions</button>
   <button class="tab-btn" data-tab="usage" onclick="switchTab('usage')">Usage</button>
+  <button class="tab-btn" data-tab="team" onclick="switchTab('team')">Team Activity</button>
 </div>
 
 <div class="container" id="main-container">
@@ -760,6 +761,71 @@
       </table>
     </div>
   </div><!-- /tab-usage -->
+
+  <div id="tab-team" class="tab-panel">
+    <div class="controls-row" style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:16px;">
+      <div>
+        <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Since (start date)</label>
+        <input type="date" id="team-start-date" class="filter-input" style="padding:7px 10px;">
+      </div>
+      <div>
+        <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Sort by</label>
+        <select id="team-sort" class="filter-input" style="padding:7px 10px;">
+          <option value="chats">Chats</option>
+          <option value="messages">Messages</option>
+          <option value="days_active">Days active</option>
+          <option value="spend">Estimated spend</option>
+        </select>
+      </div>
+      <div>
+        <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Page size</label>
+        <select id="team-page-size" class="filter-input" style="padding:7px 10px;">
+          <option>25</option><option selected>50</option><option>100</option>
+        </select>
+      </div>
+      <button class="ai-btn" onclick="teamState.page=1;loadTeamActivity()">Apply</button>
+    </div>
+
+    <div id="team-error" style="display:none;background:rgba(220,38,38,.12);border:1px solid var(--error);color:var(--error);border-radius:8px;padding:12px 14px;margin-bottom:16px;white-space:pre-wrap;"></div>
+
+    <div class="stats-row" id="team-stats-row"></div>
+
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h2>Top users by chats</h2>
+        <div class="chart-wrap tall"><canvas id="chart-team-chats"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h2>Chats vs. messages (top users)</h2>
+        <div class="chart-wrap tall"><canvas id="chart-team-messages"></canvas></div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Team member activity</span>
+        <span id="team-range-label" class="muted" style="font-size:12px;font-weight:normal;"></span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Name</th><th>Email</th><th>Role</th>
+          <th style="text-align:right;">Chats</th>
+          <th style="text-align:right;">Messages</th>
+          <th style="text-align:right;">Projects</th>
+          <th style="text-align:right;">Code sessions</th>
+          <th style="text-align:right;">Days active</th>
+          <th style="text-align:right;">Est. spend</th>
+          <th>Last active</th>
+        </tr></thead>
+        <tbody id="team-table-body"></tbody>
+      </table>
+      <div class="pager" style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;">
+        <button class="signout-btn" id="team-prev" onclick="teamPage(-1)">‹ Prev</button>
+        <span id="team-page-label" class="muted" style="font-size:12px;">Page 1</span>
+        <button class="signout-btn" id="team-next" onclick="teamPage(1)">Next ›</button>
+      </div>
+    </div>
+  </div><!-- /tab-team -->
 </div>
 
 </div><!-- /#app -->
@@ -1516,6 +1582,148 @@ function switchTab(tab) {
     b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(p =>
     p.classList.toggle('active', p.id === 'tab-' + tab));
+  if (tab === 'team' && !teamState.loaded) { teamInit(); }
+}
+
+// ─── Team Activity (claude.ai admin analytics) ──────────────────────────────
+const teamState = { page: 1, loaded: false, lastCount: 0 };
+
+function teamInit() {
+  // Default start date = 30 days ago (only set once).
+  const d = document.getElementById('team-start-date');
+  if (d && !d.value) {
+    const dt = new Date(Date.now() - 30 * 864e5);
+    d.value = dt.toISOString().slice(0, 10);
+  }
+  loadTeamActivity();
+}
+
+function teamPage(delta) {
+  const next = teamState.page + delta;
+  if (next < 1) return;
+  if (delta > 0 && teamState.lastCount < teamPageSize()) return; // no more pages
+  teamState.page = next;
+  loadTeamActivity();
+}
+
+function teamPageSize() {
+  return parseInt(document.getElementById('team-page-size').value, 10) || 50;
+}
+
+function teamShowError(msg) {
+  const e = document.getElementById('team-error');
+  e.style.display = 'block';
+  e.textContent = msg;
+}
+
+async function loadTeamActivity() {
+  const errEl = document.getElementById('team-error');
+  errEl.style.display = 'none';
+  const params = new URLSearchParams({
+    page: teamState.page,
+    page_size: teamPageSize(),
+    sort: document.getElementById('team-sort').value,
+    order: 'desc',
+    start_date: document.getElementById('team-start-date').value || '',
+  });
+  let data;
+  try {
+    const res = await fetch('/api/team-activity?' + params.toString(),
+                            { headers: authHeaders() });
+    data = await res.json();
+  } catch (e) {
+    teamShowError('Request failed: ' + e.message);
+    return;
+  }
+  if (data.error) {
+    teamShowError(data.error + (data.detail ? '\n\n' + data.detail : '')
+                  + (data.hint ? '\n\n' + data.hint : ''));
+    document.getElementById('team-table-body').innerHTML = '';
+    document.getElementById('team-stats-row').innerHTML = '';
+    return;
+  }
+  teamState.loaded = true;
+  const members = data.members || [];
+  teamState.lastCount = members.length;
+  renderTeamStats(members);
+  renderTeamTable(members);
+  renderTeamCharts(members);
+  document.getElementById('team-page-label').textContent = 'Page ' + teamState.page;
+  document.getElementById('team-prev').disabled = teamState.page <= 1;
+  document.getElementById('team-next').disabled = members.length < teamPageSize();
+  const sd = data.start_date || document.getElementById('team-start-date').value;
+  document.getElementById('team-range-label').textContent =
+    (sd ? 'since ' + sd : '') + ' · ' + members.length + ' shown';
+}
+
+function teamEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g,
+    c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function teamMoney(n) { return '$' + (Number(n) || 0).toFixed(2); }
+
+function renderTeamStats(members) {
+  const sum = (k) => members.reduce((a, m) => a + (Number(m[k]) || 0), 0);
+  const activeUsers = members.filter(m => (m.chat_count || 0) > 0).length;
+  const tiles = [
+    ['Members', members.length],
+    ['Active (has chats)', activeUsers],
+    ['Total chats', sum('chat_count').toLocaleString()],
+    ['Total messages', sum('message_count').toLocaleString()],
+    ['Code sessions', sum('code_session_count').toLocaleString()],
+    ['Est. spend', teamMoney(sum('estimated_spend_us_dollars'))],
+  ];
+  document.getElementById('team-stats-row').innerHTML = tiles.map(([l, v]) =>
+    `<div class="stat-card"><div class="value">${v}</div>` +
+    `<div class="label">${l}</div></div>`).join('');
+}
+
+function renderTeamTable(members) {
+  const body = document.getElementById('team-table-body');
+  if (!members.length) {
+    body.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px;">No activity in this range.</td></tr>';
+    return;
+  }
+  body.innerHTML = members.map(m => `<tr>
+    <td>${teamEsc(m.name)}</td>
+    <td>${teamEsc(m.email)}</td>
+    <td>${teamEsc(m.role)}</td>
+    <td style="text-align:right;">${(m.chat_count||0).toLocaleString()}</td>
+    <td style="text-align:right;">${(m.message_count||0).toLocaleString()}</td>
+    <td style="text-align:right;">${(m.projects_created_count||0)+(m.projects_used_count||0)}</td>
+    <td style="text-align:right;">${(m.code_session_count||0).toLocaleString()}</td>
+    <td style="text-align:right;">${m.days_active||0}</td>
+    <td style="text-align:right;">${teamMoney(m.estimated_spend_us_dollars)}</td>
+    <td>${teamEsc(m.last_active)}</td>
+  </tr>`).join('');
+}
+
+function renderTeamCharts(members) {
+  const top = members.slice()
+    .sort((a, b) => (b.chat_count || 0) - (a.chat_count || 0))
+    .slice(0, 10);
+  const labels = top.map(m => m.name || m.email || '?');
+
+  if (charts.teamChats) charts.teamChats.destroy();
+  charts.teamChats = new Chart(document.getElementById('chart-team-chats'), {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'Chats',
+      data: top.map(m => m.chat_count || 0),
+      backgroundColor: '#6366f1' }] },
+    options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } } }
+  });
+
+  if (charts.teamMessages) charts.teamMessages.destroy();
+  charts.teamMessages = new Chart(document.getElementById('chart-team-messages'), {
+    type: 'bar',
+    data: { labels, datasets: [
+      { label: 'Chats',    data: top.map(m => m.chat_count || 0),    backgroundColor: '#6366f1' },
+      { label: 'Messages', data: top.map(m => m.message_count || 0), backgroundColor: '#22c55e' },
+    ] },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { x: { stacked: false }, y: { stacked: false } } }
+  });
 }
 
 // ─── Filter + render ────────────────────────────────────────────────────────
