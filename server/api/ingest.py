@@ -273,6 +273,26 @@ class handler(BaseHTTPRequestHandler):
             "rows_upserted": inserted, "cookie_ok": ok,
         })
 
+    def _handle_team_activity_reset(self, body):
+        """Delete stored team-activity rows so a backfill can repopulate cleanly.
+
+        Body: {"kind":"team_activity_reset", "org": "<uuid>"?}. With `org`, only
+        that org is cleared; without it, ALL team-activity data is wiped. Gated
+        by the ingest token (same as every other ingest write)."""
+        sb = service_client()
+        org = (body.get("org") or "").strip()
+        daily = sb.table("team_activity_daily").delete()
+        status = sb.table("team_activity_org").delete()
+        if org:
+            daily = daily.eq("org", org)
+            status = status.eq("org", org)
+        daily_deleted = len(daily.execute().data or [])
+        status.execute()
+        return write_json(self, 200, {
+            "ok": True, "reset": org or "all",
+            "rows_deleted": daily_deleted,
+        })
+
     def _handle_usage(self, body):
         sb = service_client()
         sb.table(USAGE_TABLE).insert({
@@ -301,6 +321,11 @@ class handler(BaseHTTPRequestHandler):
         # team_activity_* tables and return early.
         if body.get("kind") == "team_activity":
             return self._handle_team_activity(body)
+
+        # Reset: wipe stored team-activity data (all orgs, or one) so a
+        # backfill can repopulate cleanly. Gated by the ingest token.
+        if body.get("kind") == "team_activity_reset":
+            return self._handle_team_activity_reset(body)
 
         # ── Usage-data shortcut ────────────────────────────────────────────
         # The collector's `usage` subcommand sends a flat object with
