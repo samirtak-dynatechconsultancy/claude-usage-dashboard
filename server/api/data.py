@@ -74,9 +74,15 @@ class handler(BaseHTTPRequestHandler):
         and pushes it to team_activity_daily via /api/ingest. The dashboard
         reads it here — no live claude.ai call (Cloudflare blocks Vercel's IP).
 
+        Date filtering uses the dashboard's header RANGE selector: the frontend
+        sends start/end (YYYY-MM-DD) and each user's per-day rows are aggregated
+        across that range (sum counts/spend, sum days_active = active days in
+        range, max last_active).
+
         Query params:
           org   — org UUID to show (default: org with the most recent success)
-          date  — snapshot_date YYYY-MM-DD (default: latest date for that org)
+          start — inclusive range start YYYY-MM-DD (omit/blank = no lower bound)
+          end   — inclusive range end   YYYY-MM-DD (omit/blank = no upper bound)
           sort  — chats|messages|days_active|spend  (default chats)
           order — asc|desc                          (default desc)
           page, page_size — client-side pager parity
@@ -104,7 +110,7 @@ class handler(BaseHTTPRequestHandler):
 
         if not orgs:
             return write_json(self, 200, {
-                "orgs": [], "members": [], "dates": [],
+                "orgs": [], "members": [],
                 "error": "No team activity collected yet",
                 "detail": "Configure analytics_orgs (org + full Cookie header) "
                           "in the collector's config.json and let the daily "
@@ -122,42 +128,49 @@ class handler(BaseHTTPRequestHandler):
 
         status = next((o for o in orgs if o["org"] == org), None)
 
-        # ── Dates available for this org (dropdown) ─────────────────────────
-        date_rows = (sb.table("team_activity_daily")
-                     .select("snapshot_date")
-                     .eq("org", org)
-                     .order("snapshot_date", desc=True).execute().data) or []
-        dates = []
-        for r in date_rows:
-            d = _iso_day(r.get("snapshot_date"))
-            if d and d not in dates:
-                dates.append(d)
+        # ── Rows for org within the header range, aggregated per user ───────
+        start = (first("start", "") or "").strip()
+        end = (first("end", "") or "").strip()
+        q = (sb.table("team_activity_daily")
+             .select("user_key, name, email, role, chat_count, message_count, "
+                     "projects_created_count, projects_used_count, "
+                     "code_session_count, days_active, "
+                     "estimated_spend_us_dollars, last_active")
+             .eq("org", org))
+        if start:
+            q = q.gte("snapshot_date", start)
+        if end:
+            q = q.lte("snapshot_date", end)
+        rows = q.execute().data or []
 
-        selected_date = (first("date", "") or "").strip()
-        if selected_date not in dates:
-            selected_date = dates[0] if dates else ""
-
-        # ── Members for org + date ──────────────────────────────────────────
-        members = []
-        if selected_date:
-            rows = (sb.table("team_activity_daily")
-                    .select("member, name, email, role, chat_count, "
-                            "message_count, projects_created_count, "
-                            "projects_used_count, code_session_count, "
-                            "days_active, estimated_spend_us_dollars, last_active")
-                    .eq("org", org)
-                    .eq("snapshot_date", selected_date).execute().data) or []
-            for r in rows:
-                # `member` is the raw claude.ai object (has every field the UI
-                # renders). Fall back to the flat columns if it's somehow empty.
-                m = r.get("member")
-                if not isinstance(m, dict) or not m:
-                    m = {k: r.get(k) for k in (
-                        "name", "email", "role", "chat_count", "message_count",
-                        "projects_created_count", "projects_used_count",
-                        "code_session_count", "days_active",
-                        "estimated_spend_us_dollars", "last_active")}
-                members.append(m)
+        SUM_INT = ("chat_count", "message_count", "projects_created_count",
+                   "projects_used_count", "code_session_count", "days_active")
+        agg = {}
+        for r in rows:
+            key = r.get("user_key") or r.get("email") or r.get("name")
+            if key is None:
+                continue
+            a = agg.get(key)
+            if a is None:
+                a = {"name": None, "email": None, "role": None,
+                     "estimated_spend_us_dollars": 0.0, "last_active": None}
+                for f in SUM_INT:
+                    a[f] = 0
+                agg[key] = a
+            a["name"] = a["name"] or r.get("name")
+            a["email"] = a["email"] or r.get("email")
+            a["role"] = a["role"] or r.get("role")
+            for f in SUM_INT:
+                a[f] += int(r.get(f) or 0)
+            try:
+                a["estimated_spend_us_dollars"] += float(
+                    r.get("estimated_spend_us_dollars") or 0)
+            except (TypeError, ValueError):
+                pass
+            la = r.get("last_active")
+            if la and (a["last_active"] is None or str(la) > str(a["last_active"])):
+                a["last_active"] = la
+        members = list(agg.values())
 
         # ── Sort + paginate (parity with the old proxy contract) ────────────
         sort_key = {
@@ -173,16 +186,16 @@ class handler(BaseHTTPRequestHandler):
             page_size = max(1, int(first("page_size", "50")))
         except ValueError:
             page, page_size = 1, 50
-        start = (page - 1) * page_size
-        page_members = members[start:start + page_size]
+        pstart = (page - 1) * page_size
+        page_members = members[pstart:pstart + page_size]
 
         return write_json(self, 200, {
             "orgs":       orgs,
             "org":        org,
             "org_name":   status.get("org_name") if status else org,
             "status":     status,
-            "dates":      dates,
-            "date":       selected_date,
+            "start":      start,
+            "end":        end,
             "members":    page_members,
             "page":       page,
             "page_size":  page_size,

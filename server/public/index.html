@@ -769,10 +769,8 @@
         <select id="team-org" class="filter-input" style="padding:7px 10px;min-width:220px;"
                 onchange="teamState.page=1;teamOnOrgChange()"></select>
       </div>
-      <div>
-        <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Date</label>
-        <select id="team-date" class="filter-input" style="padding:7px 10px;"
-                onchange="teamState.page=1;loadTeamActivity()"></select>
+      <div style="align-self:center;font-size:12px;color:var(--muted);">
+        Date range: use the <strong>RANGE</strong> filter in the header.
       </div>
       <div>
         <label class="control-label" style="display:block;font-size:11px;color:var(--muted);margin-bottom:4px;">Sort by</label>
@@ -1018,13 +1016,14 @@ async function init() {
       const customEl = document.getElementById('custom-date-range');
       if (customEl) customEl.style.display = selectedRange === 'custom' ? 'flex' : 'none';
       applyFilter();
+      if (currentTab === 'team') { teamState.page = 1; loadTeamActivity(); }
     });
   });
   // Custom date inputs
   const dateFromEl = document.getElementById('date-from');
   const dateToEl = document.getElementById('date-to');
-  if (dateFromEl) dateFromEl.addEventListener('change', () => { customDateFrom = dateFromEl.value; applyFilter(); });
-  if (dateToEl) dateToEl.addEventListener('change', () => { customDateTo = dateToEl.value; applyFilter(); });
+  if (dateFromEl) dateFromEl.addEventListener('change', () => { customDateFrom = dateFromEl.value; applyFilter(); if (currentTab === 'team') { teamState.page = 1; loadTeamActivity(); } });
+  if (dateToEl) dateToEl.addEventListener('change', () => { customDateTo = dateToEl.value; applyFilter(); if (currentTab === 'team') { teamState.page = 1; loadTeamActivity(); } });
 
   await loadData();
   document.getElementById('status').style.display = 'none';
@@ -1593,16 +1592,26 @@ function switchTab(tab) {
     b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(p =>
     p.classList.toggle('active', p.id === 'tab-' + tab));
-  if (tab === 'team' && !teamState.loaded) { teamInit(); }
+  // Team Activity uses the header RANGE filter, so always reload on entry to
+  // reflect any range change made while another tab was active.
+  if (tab === 'team') { teamState.page = 1; loadTeamActivity(); }
 }
 
 // ─── Team Activity (daily claude.ai admin analytics, from the DB) ────────────
-// The collector pushes one row per user per org per day. This tab lets you
-// pick an organization + a date, and flags an org whose Cookie looks expired.
+// The collector pushes one row per user per org per day. This tab lets you pick
+// an organization; the date range comes from the header RANGE selector, and
+// each user's per-day rows are aggregated across it. Flags expired cookies.
 const teamState = { page: 1, loaded: false, lastCount: 0,
-                    orgs: [], selectedOrg: '', selectedDate: '' };
+                    orgs: [], selectedOrg: '' };
 
 function teamInit() { loadTeamActivity(); }
+
+// Human label for the current header range, e.g. "Last 30 Days".
+function teamRangeLabel() {
+  return ({today: 'Today', '7d': 'Last 7 Days', '30d': 'Last 30 Days',
+           '90d': 'Last 90 Days', all: 'All Time',
+           custom: 'Custom Range'}[selectedRange]) || '';
+}
 
 function teamPage(delta) {
   const next = teamState.page + delta;
@@ -1622,11 +1631,8 @@ function teamShowError(msg) {
   e.textContent = msg;
 }
 
-// Org dropdown changed → date list belongs to the new org, so reset the date
-// (server picks the latest for that org when we send an empty date).
 function teamOnOrgChange() {
   teamState.selectedOrg = document.getElementById('team-org').value;
-  teamState.selectedDate = '';
   loadTeamActivity();
 }
 
@@ -1639,13 +1645,6 @@ function renderTeamOrgs(orgs, selectedOrg) {
     return `<option value="${teamEsc(o.org)}"${o.org === selectedOrg ? ' selected' : ''}>` +
            `${teamEsc(o.org_name)}${flag}</option>`;
   }).join('');
-}
-
-function renderTeamDates(dates, selectedDate) {
-  const sel = document.getElementById('team-date');
-  if (!dates.length) { sel.innerHTML = '<option value="">(no data)</option>'; return; }
-  sel.innerHTML = dates.map(d =>
-    `<option value="${d}"${d === selectedDate ? ' selected' : ''}>${d}</option>`).join('');
 }
 
 // A collection is "stale" if the last success was more than ~2 days ago
@@ -1678,6 +1677,7 @@ function renderTeamCookieBanner(status) {
 async function loadTeamActivity() {
   const errEl = document.getElementById('team-error');
   errEl.style.display = 'none';
+  const { start, end } = getRangeBounds(selectedRange);
   const params = new URLSearchParams({
     view: 'team-activity',
     page: teamState.page,
@@ -1685,7 +1685,8 @@ async function loadTeamActivity() {
     sort: document.getElementById('team-sort').value,
     order: 'desc',
     org: teamState.selectedOrg || '',
-    date: teamState.selectedDate || '',
+    start: start || '',
+    end: end || '',
   });
   let data;
   try {
@@ -1700,7 +1701,6 @@ async function loadTeamActivity() {
     teamShowError(data.error + (data.detail ? '\n\n' + data.detail : '')
                   + (data.hint ? '\n\n' + data.hint : ''));
     document.getElementById('team-org').innerHTML = '';
-    document.getElementById('team-date').innerHTML = '';
     document.getElementById('team-cookie-warn').style.display = 'none';
     document.getElementById('team-table-body').innerHTML = '';
     document.getElementById('team-stats-row').innerHTML = '';
@@ -1709,9 +1709,7 @@ async function loadTeamActivity() {
   teamState.loaded = true;
   teamState.orgs = data.orgs || [];
   teamState.selectedOrg = data.org || '';
-  teamState.selectedDate = data.date || '';
   renderTeamOrgs(teamState.orgs, teamState.selectedOrg);
-  renderTeamDates(data.dates || [], teamState.selectedDate);
   renderTeamCookieBanner(data.status);
 
   const members = data.members || [];
@@ -1724,7 +1722,7 @@ async function loadTeamActivity() {
   document.getElementById('team-next').disabled = (teamState.page * teamPageSize()) >= (data.total || 0);
   const total = data.total != null ? data.total : members.length;
   document.getElementById('team-range-label').textContent =
-    (teamState.selectedDate ? teamState.selectedDate : '') + ' · ' + total + ' users';
+    teamRangeLabel() + ' · ' + total + ' users';
 }
 
 function teamEsc(s) {

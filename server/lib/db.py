@@ -133,6 +133,26 @@ class QueryBuilder:
         self._params.append(val)
         return self
 
+    def gte(self, col, val):
+        self._wheres.append(f'"{col}" >= %s')
+        self._params.append(val)
+        return self
+
+    def lte(self, col, val):
+        self._wheres.append(f'"{col}" <= %s')
+        self._params.append(val)
+        return self
+
+    def gt(self, col, val):
+        self._wheres.append(f'"{col}" > %s')
+        self._params.append(val)
+        return self
+
+    def lt(self, col, val):
+        self._wheres.append(f'"{col}" < %s')
+        self._params.append(val)
+        return self
+
     def ilike(self, col, val):
         self._wheres.append(f'"{col}" ILIKE %s')
         self._params.append(val)
