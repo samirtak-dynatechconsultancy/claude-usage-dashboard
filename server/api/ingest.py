@@ -212,7 +212,12 @@ class handler(BaseHTTPRequestHandler):
         if not org:
             return write_json(self, 400, {"error": "org is required"})
         org_name = body.get("org_name")
-        snapshot_date = (body.get("snapshot_date") or now_iso[:10]).strip()
+        # Normalize to a canonical YYYY-MM-DD (strip any time/zone suffix) so
+        # that N admins pushing the SAME org on the SAME day always share one
+        # snapshot_date -> the (org, snapshot_date, user_key) unique key dedups
+        # them to a single row per person regardless of how each puller
+        # formatted the date.
+        snapshot_date = (body.get("snapshot_date") or now_iso[:10]).strip()[:10]
         ok = bool(body.get("ok", True))
         error = body.get("error")
         members = body.get("members") or []
