@@ -795,6 +795,9 @@
     <!-- Cookie-expired / stale-collection banner (per selected org). -->
     <div id="team-cookie-warn" style="display:none;background:rgba(234,179,8,.12);border:1px solid #eab308;color:#a16207;border-radius:8px;padding:12px 14px;margin-bottom:16px;white-space:pre-wrap;"></div>
 
+    <!-- Which admin device collected the selected org's data. -->
+    <div id="team-source-info" style="display:none;font-size:12px;color:var(--muted);margin-bottom:12px;"></div>
+
     <div id="team-error" style="display:none;background:rgba(220,38,38,.12);border:1px solid var(--error);color:var(--error);border-radius:8px;padding:12px 14px;margin-bottom:16px;white-space:pre-wrap;"></div>
 
     <div class="stats-row" id="team-stats-row"></div>
@@ -1674,6 +1677,21 @@ function renderTeamCookieBanner(status) {
   else { el.style.display = 'none'; }
 }
 
+// Show which admin device collected the selected org's data.
+function renderTeamSource(status) {
+  const el = document.getElementById('team-source-info');
+  if (!el) return;
+  const host = status && status.source_host;
+  const user = status && status.os_user;
+  if (host || user) {
+    el.textContent = 'Collected from ' + (host || 'unknown device')
+                     + (user ? ' (' + user + ')' : '');
+    el.style.display = 'block';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
 async function loadTeamActivity() {
   const errEl = document.getElementById('team-error');
   errEl.style.display = 'none';
@@ -1702,6 +1720,7 @@ async function loadTeamActivity() {
                   + (data.hint ? '\n\n' + data.hint : ''));
     document.getElementById('team-org').innerHTML = '';
     document.getElementById('team-cookie-warn').style.display = 'none';
+    document.getElementById('team-source-info').style.display = 'none';
     document.getElementById('team-table-body').innerHTML = '';
     document.getElementById('team-stats-row').innerHTML = '';
     return;
@@ -1711,6 +1730,7 @@ async function loadTeamActivity() {
   teamState.selectedOrg = data.org || '';
   renderTeamOrgs(teamState.orgs, teamState.selectedOrg);
   renderTeamCookieBanner(data.status);
+  renderTeamSource(data.status);
 
   const members = data.members || [];
   teamState.lastCount = members.length;

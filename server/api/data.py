@@ -96,7 +96,7 @@ class handler(BaseHTTPRequestHandler):
         # ── Orgs (dropdown + cookie health) ─────────────────────────────────
         orgs_raw = (sb.table("team_activity_org")
                     .select("org, org_name, ok, error, last_success_at, "
-                            "last_attempt_at, member_count")
+                            "last_attempt_at, member_count, source_host, os_user")
                     .order("org_name").execute().data) or []
         orgs = [{
             "org":             o.get("org"),
@@ -106,6 +106,8 @@ class handler(BaseHTTPRequestHandler):
             "last_success_at": _iso_str(o.get("last_success_at")),
             "last_attempt_at": _iso_str(o.get("last_attempt_at")),
             "member_count":    o.get("member_count"),
+            "source_host":     o.get("source_host"),
+            "os_user":         o.get("os_user"),
         } for o in orgs_raw]
 
         if not orgs:

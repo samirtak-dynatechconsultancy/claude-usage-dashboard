@@ -222,8 +222,9 @@ class handler(BaseHTTPRequestHandler):
         error = body.get("error")
         members = body.get("members") or []
         # Which machine pushed this (if the puller includes it). Lets you see
-        # which admin device is sending each org's data.
-        src_host = (body.get("host") or "").strip() or None
+        # which admin device is sending each org's data. The collector sends
+        # `source_host`; accept `host` too for forward/back compatibility.
+        src_host = (body.get("source_host") or body.get("host") or "").strip() or None
         src_user = (body.get("os_user") or "").strip() or None
 
         inserted = 0
