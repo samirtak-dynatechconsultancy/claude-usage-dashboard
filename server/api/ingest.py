@@ -221,6 +221,10 @@ class handler(BaseHTTPRequestHandler):
         ok = bool(body.get("ok", True))
         error = body.get("error")
         members = body.get("members") or []
+        # Which machine pushed this (if the puller includes it). Lets you see
+        # which admin device is sending each org's data.
+        src_host = (body.get("host") or "").strip() or None
+        src_user = (body.get("os_user") or "").strip() or None
 
         inserted = 0
         if ok and members:
@@ -251,6 +255,8 @@ class handler(BaseHTTPRequestHandler):
                     "days_active":                _as_int(m.get("days_active")),
                     "estimated_spend_us_dollars": m.get("estimated_spend_us_dollars"),
                     "last_active":                m.get("last_active"),
+                    "source_host":                src_host,
+                    "os_user":                    src_user,
                     "member":                     m,
                 })
             if rows:
@@ -265,6 +271,8 @@ class handler(BaseHTTPRequestHandler):
             "last_attempt_at": now_iso,
             "ok":              ok,
             "error":           error,
+            "source_host":     src_host,
+            "os_user":         src_user,
         }
         if ok:
             status["last_success_at"] = now_iso
