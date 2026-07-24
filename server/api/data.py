@@ -145,8 +145,13 @@ class handler(BaseHTTPRequestHandler):
             q = q.lte("snapshot_date", end)
         rows = q.execute().data or []
 
+        # Event counts are summed across the range. days_active is NOT summed:
+        # claude.ai's per-single-day days_active isn't a clean 0/1 (it can be 2),
+        # so summing over-counts (e.g. 38 "active days" in a 30-day range). The
+        # real "days active in range" is how many distinct days the user has a
+        # row for — one daily row == one active day — so we count rows instead.
         SUM_INT = ("chat_count", "message_count", "projects_created_count",
-                   "projects_used_count", "code_session_count", "days_active")
+                   "projects_used_count", "code_session_count")
         agg = {}
         for r in rows:
             key = r.get("user_key") or r.get("email") or r.get("name")
@@ -155,7 +160,8 @@ class handler(BaseHTTPRequestHandler):
             a = agg.get(key)
             if a is None:
                 a = {"name": None, "email": None, "role": None,
-                     "estimated_spend_us_dollars": 0.0, "last_active": None}
+                     "estimated_spend_us_dollars": 0.0, "last_active": None,
+                     "days_active": 0}
                 for f in SUM_INT:
                     a[f] = 0
                 agg[key] = a
@@ -164,6 +170,7 @@ class handler(BaseHTTPRequestHandler):
             a["role"] = a["role"] or r.get("role")
             for f in SUM_INT:
                 a[f] += int(r.get(f) or 0)
+            a["days_active"] += 1   # one daily row = one active day in range
             try:
                 a["estimated_spend_us_dollars"] += float(
                     r.get("estimated_spend_us_dollars") or 0)
