@@ -235,9 +235,12 @@ class handler(BaseHTTPRequestHandler):
                 if not isinstance(m, dict):
                     continue
                 key = _member_user_key(m, idx)
-                # Guard against duplicate keys within one push (unique constraint).
+                # Dedupe within the push: never emit two rows for the same user
+                # on the same day. (Earlier code suffixed the key with #idx to
+                # dodge the unique constraint, but that created a spurious second
+                # row -> inflated per-user day counts.) Keep the first occurrence.
                 if key in seen_keys:
-                    key = f"{key}#{idx}"
+                    continue
                 seen_keys.add(key)
                 rows.append({
                     "org":                        org,
