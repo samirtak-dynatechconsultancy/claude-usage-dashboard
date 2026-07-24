@@ -272,9 +272,14 @@ class handler(BaseHTTPRequestHandler):
             "last_attempt_at": now_iso,
             "ok":              ok,
             "error":           error,
-            "source_host":     src_host,
-            "os_user":         src_user,
         }
+        # Only touch source_host/os_user when the push actually carries them, so
+        # a push from an older collector (which doesn't send them) can't wipe a
+        # device name a newer collector already recorded for this org.
+        if src_host is not None:
+            status["source_host"] = src_host
+        if src_user is not None:
+            status["os_user"] = src_user
         if ok:
             status["last_success_at"] = now_iso
             status["member_count"] = len(members)
