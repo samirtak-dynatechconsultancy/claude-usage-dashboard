@@ -820,7 +820,7 @@
       </div>
       <table>
         <thead><tr>
-          <th>Name</th><th>Email</th><th>Role</th>
+          <th>Name</th><th>Email</th><th>Role</th><th>Seat tier</th>
           <th style="text-align:right;">Chats</th>
           <th style="text-align:right;">Messages</th>
           <th style="text-align:right;">Projects</th>
@@ -1767,23 +1767,30 @@ function renderTeamStats(members) {
     `<div class="label">${l}</div></div>`).join('');
 }
 
+// Prettify a seat_tier slug, e.g. team_standard -> "Team Standard".
+function teamSeat(s) {
+  if (!s) return '—';
+  return String(s).split('_').map(w => w ? w[0].toUpperCase() + w.slice(1) : w).join(' ');
+}
+
 function renderTeamTable(members) {
   const body = document.getElementById('team-table-body');
   if (!members.length) {
-    body.innerHTML = '<tr><td colspan="10" class="muted" style="text-align:center;padding:24px;">No activity in this range.</td></tr>';
+    body.innerHTML = '<tr><td colspan="11" class="muted" style="text-align:center;padding:24px;">No members yet.</td></tr>';
     return;
   }
   body.innerHTML = members.map(m => `<tr>
     <td>${teamEsc(m.name)}</td>
     <td>${teamEsc(m.email)}</td>
     <td>${teamEsc(m.role)}</td>
+    <td>${teamEsc(teamSeat(m.seat_tier))}</td>
     <td style="text-align:right;">${(m.chat_count||0).toLocaleString()}</td>
     <td style="text-align:right;">${(m.message_count||0).toLocaleString()}</td>
     <td style="text-align:right;">${(m.projects_created_count||0)+(m.projects_used_count||0)}</td>
     <td style="text-align:right;">${(m.code_session_count||0).toLocaleString()}</td>
     <td style="text-align:right;">${m.days_active||0}</td>
     <td style="text-align:right;">${teamMoney(m.estimated_spend_us_dollars)}</td>
-    <td>${teamEsc(m.last_active)}</td>
+    <td>${m.last_active ? teamEsc(m.last_active) : '—'}</td>
   </tr>`).join('');
 }
 

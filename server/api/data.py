@@ -129,56 +129,93 @@ class handler(BaseHTTPRequestHandler):
             org = max(orgs, key=lambda o: o.get("last_success_at") or "")["org"]
 
         status = next((o for o in orgs if o["org"] == org), None)
-
-        # ── Rows for org within the header range, aggregated per user ───────
         start = (first("start", "") or "").strip()
         end = (first("end", "") or "").strip()
-        q = (sb.table("team_activity_daily")
-             .select("user_key, name, email, role, chat_count, message_count, "
-                     "projects_created_count, projects_used_count, "
-                     "code_session_count, days_active, "
-                     "estimated_spend_us_dollars, last_active")
-             .eq("org", org))
-        if start:
-            q = q.gte("snapshot_date", start)
-        if end:
-            q = q.lte("snapshot_date", end)
-        rows = q.execute().data or []
 
-        # Event counts are summed across the range. days_active is NOT summed:
-        # claude.ai's per-single-day days_active isn't a clean 0/1 (it can be 2),
-        # so summing over-counts (e.g. 38 "active days" in a 30-day range). The
-        # real "days active in range" is how many distinct days the user has a
-        # row for — one daily row == one active day — so we count rows instead.
+        def _norm_key(email, name, uuid):
+            e = (email or "").strip().lower()
+            if e:
+                return e
+            if uuid:
+                return f"uuid:{uuid}"
+            return f"name:{(name or '').strip().lower()}" if name else None
+
+        # ── All activity rows for the org (seat_tier pulled from the member
+        # blob). One pass builds: the ever-active user set (with seat tier +
+        # overall last-active), plus range-scoped activity aggregates. ────────
         SUM_INT = ("chat_count", "message_count", "projects_created_count",
                    "projects_used_count", "code_session_count")
+        rows = (sb.table("team_activity_daily")
+                .select("user_key, snapshot_date, name, email, role, "
+                        "chat_count, message_count, projects_created_count, "
+                        "projects_used_count, code_session_count, "
+                        "estimated_spend_us_dollars, last_active, "
+                        "member->>'seat_tier' AS seat_tier")
+                .eq("org", org).execute().data) or []
+
+        def _blank_member():
+            m = {"name": None, "email": None, "role": None, "seat_tier": None,
+                 "last_active": None, "estimated_spend_us_dollars": 0.0,
+                 "days_active": 0}
+            for f in SUM_INT:
+                m[f] = 0
+            return m
+
         agg = {}
         for r in rows:
-            key = r.get("user_key") or r.get("email") or r.get("name")
+            key = r.get("user_key") or _norm_key(r.get("email"), r.get("name"), None)
+            if key is None:
+                continue
+            a = agg.get(key) or _blank_member()
+            agg[key] = a
+            a["name"] = a["name"] or r.get("name")
+            a["email"] = a["email"] or r.get("email")
+            a["role"] = a["role"] or r.get("role")
+            a["seat_tier"] = a["seat_tier"] or r.get("seat_tier")
+            # last_active = the user's most recent active day OVERALL (so a member
+            # inactive in the selected range still shows when they were last seen).
+            la = r.get("last_active")
+            if la and (a["last_active"] is None or str(la) > str(a["last_active"])):
+                a["last_active"] = la
+            # Range-scoped activity: only rows whose day falls inside the range.
+            d = _iso_day(r.get("snapshot_date"))
+            if (not start or d >= start) and (not end or d <= end):
+                for f in SUM_INT:
+                    a[f] += int(r.get(f) or 0)
+                a["days_active"] += 1   # one daily row = one active day in range
+                try:
+                    a["estimated_spend_us_dollars"] += float(
+                        r.get("estimated_spend_us_dollars") or 0)
+                except (TypeError, ValueError):
+                    pass
+
+        # ── Merge the full member roster (from /members) so seat holders who
+        # have NEVER been active — no last_active, no activity rows — still show.
+        roster = []
+        try:
+            rrow = (sb.table("team_activity_org").select("roster")
+                    .eq("org", org).limit(1).execute().data)
+            if rrow and isinstance(rrow[0].get("roster"), list):
+                roster = rrow[0]["roster"]
+        except Exception:
+            roster = []
+        for rm in roster:
+            if not isinstance(rm, dict):
+                continue
+            key = _norm_key(rm.get("email"), rm.get("name"), rm.get("uuid"))
             if key is None:
                 continue
             a = agg.get(key)
             if a is None:
-                a = {"name": None, "email": None, "role": None,
-                     "estimated_spend_us_dollars": 0.0, "last_active": None,
-                     "days_active": 0}
-                for f in SUM_INT:
-                    a[f] = 0
+                a = _blank_member()
                 agg[key] = a
-            a["name"] = a["name"] or r.get("name")
-            a["email"] = a["email"] or r.get("email")
-            a["role"] = a["role"] or r.get("role")
-            for f in SUM_INT:
-                a[f] += int(r.get(f) or 0)
-            a["days_active"] += 1   # one daily row = one active day in range
-            try:
-                a["estimated_spend_us_dollars"] += float(
-                    r.get("estimated_spend_us_dollars") or 0)
-            except (TypeError, ValueError):
-                pass
-            la = r.get("last_active")
-            if la and (a["last_active"] is None or str(la) > str(a["last_active"])):
-                a["last_active"] = la
+            # Roster is authoritative for identity + seat tier; keep activity's
+            # last_active. (Roster has no last_active -> never-active stays blank.)
+            a["name"] = a["name"] or rm.get("name")
+            a["email"] = a["email"] or rm.get("email")
+            a["role"] = a["role"] or rm.get("role")
+            a["seat_tier"] = rm.get("seat_tier") or a["seat_tier"]
+
         members = list(agg.values())
 
         # ── Sort + paginate (parity with the old proxy contract) ────────────

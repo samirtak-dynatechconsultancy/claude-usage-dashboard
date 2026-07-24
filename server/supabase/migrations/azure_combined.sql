@@ -240,5 +240,8 @@ create table if not exists public.team_activity_org (
     last_success_at timestamptz,
     ok              boolean not null default true,
     error           text,
-    member_count    integer
+    member_count    integer,
+    source_host     text,
+    os_user         text,
+    roster          jsonb not null default '[]'::jsonb
 );

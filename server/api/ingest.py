@@ -295,6 +295,36 @@ class handler(BaseHTTPRequestHandler):
             "rows_upserted": inserted, "cookie_ok": ok,
         })
 
+    def _handle_team_roster(self, body):
+        """Store the full member roster (from claude.ai /members) for one org on
+        team_activity_org.roster, so the dashboard can show seat holders who have
+        never been active. Only touches roster/org_name (+ device), never the
+        cookie-health fields."""
+        sb = service_client()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        org = (body.get("org") or "").strip()
+        if not org:
+            return write_json(self, 400, {"error": "org is required"})
+        roster = body.get("roster")
+        if not isinstance(roster, list):
+            roster = []
+        payload = {
+            "org":             org,
+            "org_name":        body.get("org_name"),
+            "roster":          roster,
+            "last_attempt_at": now_iso,
+        }
+        src_host = (body.get("source_host") or body.get("host") or "").strip() or None
+        src_user = (body.get("os_user") or "").strip() or None
+        if src_host is not None:
+            payload["source_host"] = src_host
+        if src_user is not None:
+            payload["os_user"] = src_user
+        sb.table("team_activity_org").upsert(
+            payload, on_conflict="org").execute()
+        return write_json(self, 200, {"ok": True, "org": org,
+                                      "roster_size": len(roster)})
+
     def _handle_team_activity_reset(self, body):
         """Delete stored team-activity rows so a backfill can repopulate cleanly.
 
@@ -348,6 +378,10 @@ class handler(BaseHTTPRequestHandler):
         # backfill can repopulate cleanly. Gated by the ingest token.
         if body.get("kind") == "team_activity_reset":
             return self._handle_team_activity_reset(body)
+
+        # Roster: full member list (all seats, incl. never-active) for an org.
+        if body.get("kind") == "team_roster":
+            return self._handle_team_roster(body)
 
         # ── Usage-data shortcut ────────────────────────────────────────────
         # The collector's `usage` subcommand sends a flat object with
